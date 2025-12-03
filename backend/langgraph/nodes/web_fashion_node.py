@@ -8,14 +8,14 @@ from typing import Any, Dict, List
 
 from config import Config
 from services.web_search import WebSearchClient
-from ..state import MuseState
+from ..state import SortmeState
 
 
 class WebFashionNode:
     def __init__(self, web_client: WebSearchClient | None = None) -> None:
         self.web_client = web_client or WebSearchClient()
 
-    def __call__(self, state: MuseState) -> MuseState:
+    def __call__(self, state: SortmeState) -> SortmeState:
         import logging
         import time
         logger = logging.getLogger(__name__)
@@ -53,3 +53,4 @@ class WebFashionNode:
                 seen.add(r)
                 out.append(r)
         return out
+

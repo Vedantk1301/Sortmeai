@@ -21,11 +21,11 @@ pip install -r ../requirements.txt
 
 # Environment (preferred: .env file in backend/)
 echo OPENAI_API_KEY=sk-... > .env
-echo OPENAI_MODEL=gpt-4.1-mini >> .env
+echo OPENAI_MODEL=gpt-5-mini >> .env  # or gpt-5-nano for lower cost
 
 # Or export in shell/CI
 set OPENAI_API_KEY=sk-...         # or export OPENAI_API_KEY=...
-set OPENAI_MODEL=gpt-4.1-mini
+set OPENAI_MODEL=gpt-5-mini
 
 # Run the API
 uvicorn main:app --reload --port 8000

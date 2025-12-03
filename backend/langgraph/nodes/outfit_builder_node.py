@@ -5,14 +5,14 @@ OutfitBuilderNode composes outfits from the pooled validated products.
 from __future__ import annotations
 
 from agents import OutfitBuilderAgent
-from ..state import MuseState
+from ..state import SortmeState
 
 
 class OutfitBuilderNode:
     def __init__(self, agent: OutfitBuilderAgent | None = None) -> None:
         self.agent = agent or OutfitBuilderAgent()
 
-    def __call__(self, state: MuseState) -> MuseState:
+    def __call__(self, state: SortmeState) -> SortmeState:
         if not state.pooled_valid_products:
             return state
         context = {
@@ -26,3 +26,4 @@ class OutfitBuilderNode:
         state.outfits = outfits
         state.log_event("outfit_builder_node", {"outfits": len(outfits)})
         return state
+

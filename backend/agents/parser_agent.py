@@ -24,12 +24,12 @@ COLOR_KEYWORDS = [
 
 PATTERN_KEYWORDS = ["check", "checks", "checkered", "striped", "stripes", "floral", "solid", "plain"]
 
-INTENT_SYSTEM_PROMPT = """You are an intelligent intent classifier for a fashion shopping assistant called Muse.
+INTENT_SYSTEM_PROMPT = """You are an intelligent intent classifier for a fashion shopping assistant called Sortme.
 
 Your task: Classify the user's message into ONE of these intents:
 
 **GREETING**: User is saying hi/hello/hey
-Examples: "Hi", "Hello there", "Hey Muse", "Good morning"
+Examples: "Hi", "Hello there", "Hey Sortme", "Good morning"
 
 **ASK_ABOUT_BOT**: User asking about you (name, capabilities, what you do)
 Examples: "Who are you?", "What's your name?", "What can you do?", "Are you a bot?", "Tell me about yourself"

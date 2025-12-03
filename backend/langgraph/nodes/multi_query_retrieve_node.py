@@ -11,7 +11,7 @@ from typing import Any, Dict, List
 
 from config import Config
 from retrievers import CatalogRetriever, Reranker
-from ..state import MuseState
+from ..state import SortmeState
 
 
 class MultiQueryRetrieveNode:
@@ -23,7 +23,7 @@ class MultiQueryRetrieveNode:
         self.catalog = catalog or CatalogRetriever()
         self.reranker = reranker or Reranker()
 
-    def __call__(self, state: MuseState) -> MuseState:
+    def __call__(self, state: SortmeState) -> SortmeState:
         logger = logging.getLogger(__name__)
         product_queries = (state.planner_plan or {}).get("product_queries") or []
         
@@ -96,3 +96,4 @@ class MultiQueryRetrieveNode:
             seen.add(pid)
             deduped.append(p)
         return deduped
+

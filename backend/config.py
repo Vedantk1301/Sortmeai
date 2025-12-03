@@ -8,6 +8,15 @@ from __future__ import annotations
 
 import os
 from typing import Optional
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+# Load .env once so all modules relying on Config see environment values
+_ENV_PATH = Path(__file__).resolve().parent / ".env"
+load_dotenv(_ENV_PATH)
+# Also load from working directory if present (no override)
+load_dotenv()
 
 
 def _get_env(name: str, default: Optional[str] = None) -> Optional[str]:
@@ -18,7 +27,7 @@ def _get_env(name: str, default: Optional[str] = None) -> Optional[str]:
 class Config:
     # OpenAI / model config
     OPENAI_API_KEY: str = _get_env("OPENAI_API_KEY", "")
-    OPENAI_MODEL: str = _get_env("OPENAI_MODEL", "gpt-4.1-mini")
+    OPENAI_MODEL: str = _get_env("OPENAI_MODEL", "gpt-5-nano")
     AGENT_MODEL: str = _get_env("AGENT_MODEL", OPENAI_MODEL)
     FAST_MODEL: str = _get_env("FAST_MODEL", OPENAI_MODEL)
     WEATHER_MODEL: str = _get_env("WEATHER_MODEL", OPENAI_MODEL)

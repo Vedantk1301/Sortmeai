@@ -1,5 +1,5 @@
 """
-Core LangGraph state definitions for the Muse retrieval system.
+Core LangGraph state definitions for the Sortme retrieval system.
 """
 
 from __future__ import annotations
@@ -47,7 +47,7 @@ class LedgerEvent(BaseModel):
     label: str = "llm_call"
 
 
-class MuseState(BaseModel):
+class SortmeState(BaseModel):
     user_id: str
     user_message: str
 
@@ -92,7 +92,7 @@ class MuseState(BaseModel):
     def log_event(self, component: str, payload: Dict[str, Any], label: str = "llm_call") -> None:
         self.ledger.append(LedgerEvent(component=component, payload=payload, label=label))
 
-    def update_with(self, **kwargs: Any) -> "MuseState":
+    def update_with(self, **kwargs: Any) -> "SortmeState":
         for key, value in kwargs.items():
             setattr(self, key, value)
         return self

@@ -135,9 +135,9 @@ class StylistAgent:
             return random.choice(greetings)
         else:
             intros = [
-                f"Hey! {emoji} I'm Muse, your personal AI fashion stylist! I'm here to help you discover amazing outfits, build complete looks for any occasion, and find pieces that match your vibe. What's your name?",
-                f"Hi there! {emoji} I'm Muse! Think of me as your fashion bestie who knows every piece in our catalog. I can help you find outfits for trips, events, or just everyday slaying. Before we dive in - what should I call you?",
-                f"Hey! {emoji} I'm Muse, and I'm SO excited to help you find your perfect style! I specialize in creating complete outfits, matching colors and patterns, and finding exactly what you're looking for. What's your name?",
+                f"Hey! {emoji} I'm Sortme, your personal AI fashion stylist! I'm here to help you discover amazing outfits, build complete looks for any occasion, and find pieces that match your vibe. What's your name?",
+                f"Hi there! {emoji} I'm Sortme! Think of me as your fashion bestie who knows every piece in our catalog. I can help you find outfits for trips, events, or just everyday slaying. Before we dive in - what should I call you?",
+                f"Hey! {emoji} I'm Sortme, and I'm SO excited to help you find your perfect style! I specialize in creating complete outfits, matching colors and patterns, and finding exactly what you're looking for. What's your name?",
             ]
             return random.choice(intros)
     

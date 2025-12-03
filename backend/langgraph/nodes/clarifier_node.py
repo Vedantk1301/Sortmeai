@@ -5,14 +5,14 @@ ClarifierNode triggers clarification cards for ambiguous queries.
 from __future__ import annotations
 
 from agents import ClarifierAgent
-from ..state import MuseState
+from ..state import SortmeState
 
 
 class ClarifierNode:
     def __init__(self, agent: ClarifierAgent | None = None) -> None:
         self.agent = agent or ClarifierAgent()
 
-    def __call__(self, state: MuseState) -> MuseState:
+    def __call__(self, state: SortmeState) -> SortmeState:
         if not state.fashion_query or state.fashion_query.get("query_type") != "specific":
             return state
 
@@ -39,3 +39,4 @@ class ClarifierNode:
             {"question": state.clarification_question, "options": len(state.clarification_options)},
         )
         return state
+

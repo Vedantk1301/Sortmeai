@@ -6,6 +6,14 @@ import logging
 import os
 from typing import Any, Dict, List, Optional
 
+import pathlib
+import sys
+
+# Ensure local backend modules are importable when run as `uvicorn backend.main:app`
+BACKEND_ROOT = pathlib.Path(__file__).resolve().parent
+if str(BACKEND_ROOT) not in sys.path:
+    sys.path.insert(0, str(BACKEND_ROOT))
+
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from openai import OpenAI
@@ -13,7 +21,7 @@ from pydantic import BaseModel
 
 from api.server import create_app
 from config import Config
-from langgraph import MuseGraph, MuseState
+from langgraph import SortmeGraph, SortmeState
 
 # Load environment variables from .env for local development
 load_dotenv()
@@ -38,7 +46,7 @@ client = build_client()
 
 # Reuse the LangGraph-powered FastAPI app (includes /api/chat)
 app: FastAPI = create_app()
-compat_graph: Optional[MuseGraph] = getattr(app.state, "muse_graph", None)
+compat_graph: Optional[SortmeGraph] = getattr(app.state, "sortme_graph", None)
 
 
 def parse_response_json(response: Any) -> Dict[str, Any]:
@@ -126,7 +134,7 @@ async def analyze_text(payload: TextQuery) -> Dict[str, Any]:
     user_id = payload.userId or "compat-user"
     thread_id = payload.threadId or "compat-thread"
 
-    state = MuseState(user_id=user_id, user_message=payload.query)
+    state = SortmeState(user_id=user_id, user_message=payload.query)
     # Keep per-thread state to preserve clarification choices if the client reuses the thread_id
     state.thread_id = thread_id  # type: ignore[attr-defined]
 

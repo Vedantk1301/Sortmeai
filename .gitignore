@@ -7,3 +7,4 @@ out
 .env.*
 *.pyc
 .DS_Store
+chat_history.json

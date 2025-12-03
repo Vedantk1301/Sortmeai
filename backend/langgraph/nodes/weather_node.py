@@ -5,14 +5,14 @@ WeatherNode fetches weather guidance using GPT-5-nano (no web search).
 from __future__ import annotations
 
 from agents import WeatherAgent
-from ..state import MuseState
+from ..state import SortmeState
 
 
 class WeatherNode:
     def __init__(self, agent: WeatherAgent | None = None) -> None:
         self.agent = agent or WeatherAgent()
 
-    def __call__(self, state: MuseState) -> MuseState:
+    def __call__(self, state: SortmeState) -> SortmeState:
         if not state.planner_plan:
             return state
         query_text = state.planner_plan.get("weather_search_query")
@@ -23,3 +23,4 @@ class WeatherNode:
         state.weather_context = result
         state.log_event("weather_node", {"weather": result})
         return state
+

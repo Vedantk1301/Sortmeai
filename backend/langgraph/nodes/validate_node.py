@@ -8,14 +8,14 @@ from copy import deepcopy
 from typing import Dict, List
 
 from validators import VisionValidator
-from ..state import MuseState
+from ..state import SortmeState
 
 
 class VisionValidateNode:
     def __init__(self, validator: VisionValidator | None = None) -> None:
         self.validator = validator or VisionValidator()
 
-    def __call__(self, state: MuseState) -> MuseState:
+    def __call__(self, state: SortmeState) -> SortmeState:
         candidates = state.qdrant_filtered or state.qdrant_candidates
         if not candidates:
             return state
@@ -46,7 +46,7 @@ class WebVisionValidateNode:
     def __init__(self, validator: VisionValidator | None = None) -> None:
         self.validator = validator or VisionValidator()
 
-    def __call__(self, state: MuseState) -> MuseState:
+    def __call__(self, state: SortmeState) -> SortmeState:
         if not state.web_candidates:
             return state
 
@@ -70,3 +70,4 @@ class WebVisionValidateNode:
             )
             merged.append(product)
         return merged
+

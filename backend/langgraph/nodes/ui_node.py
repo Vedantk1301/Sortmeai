@@ -5,14 +5,14 @@ UINode emits frontend events such as refinement chips or disambiguation payloads
 from __future__ import annotations
 
 from agents import UIAgent
-from ..state import MuseState
+from ..state import SortmeState
 
 
 class UINode:
     def __init__(self, agent: UIAgent | None = None) -> None:
         self.agent = agent or UIAgent()
 
-    def __call__(self, state: MuseState) -> MuseState:
+    def __call__(self, state: SortmeState) -> SortmeState:
         # Preserve pending disambiguation cards until the user responds.
         if state.ui_event and state.ui_event.get("type") == "disambiguation" and not state.chosen_disambiguation:
             return state
@@ -39,3 +39,4 @@ class UINode:
             state.ui_event = self.agent.refinement_cards(state.final_products, state.fashion_query or {})
             state.log_event("ui_node", {"ui_event": state.ui_event})
         return state
+

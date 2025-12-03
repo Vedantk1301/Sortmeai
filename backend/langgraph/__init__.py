@@ -1,8 +1,8 @@
 """
-LangGraph wiring for the Muse retrieval system.
+LangGraph wiring for the Sortme retrieval system.
 """
 
-from .graph import MuseGraph
-from .state import MuseState
+from .graph import SortmeGraph
+from .state import SortmeState
 
-__all__ = ["MuseGraph", "MuseState"]
+__all__ = ["SortmeGraph", "SortmeState"]

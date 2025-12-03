@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import logging
 from agents import ParserAgent
-from ..state import MuseState
+from ..state import SortmeState
 
 
 class ParseNode:
@@ -14,7 +14,7 @@ class ParseNode:
         self.parser = parser or ParserAgent()
         self.logger = logging.getLogger(__name__)
 
-    def __call__(self, state: MuseState) -> MuseState:
+    def __call__(self, state: SortmeState) -> SortmeState:
         self.logger.info(f"[PARSE] Processing user message: '{state.user_message}'")
         fashion_query = self.parser(state.user_message)
         state.fashion_query = fashion_query
@@ -29,3 +29,4 @@ class ParseNode:
         
         state.log_event("parse_node", {"fashion_query": fashion_query})
         return state
+

@@ -6,13 +6,14 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
-from ..state import MuseState
+from ..state import SortmeState
 
 
 class MergeNode:
-    def __call__(self, state: MuseState) -> MuseState:
+    def __call__(self, state: SortmeState) -> SortmeState:
         merged = list(state.qdrant_valid) + list(state.web_valid)
         merged.sort(key=lambda item: item.get("validator_score", 0), reverse=True)
         state.final_products = merged[:8]
         state.log_event("merge_node", {"final_count": len(state.final_products)})
         return state
+

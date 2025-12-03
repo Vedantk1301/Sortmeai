@@ -1,5 +1,5 @@
 """
-Helpers for accessing JSON schemas used by the Muse system.
+Helpers for accessing JSON schemas used by the Sortme system.
 """
 
 import json

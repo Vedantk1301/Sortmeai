@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional
 from mem0 import Memory
 
 logger = logging.getLogger(__name__)
+from config import Config
 
 
 class MemoryService:
@@ -39,7 +40,7 @@ class MemoryService:
             "llm": {
                 "provider": "openai",
                 "config": {
-                    "model": "gpt-4o-mini",
+                    "model": Config.OPENAI_MODEL or "gpt-5-mini",
                     "temperature": 0.1,
                     "api_key": api_key,
                 },

@@ -1,5 +1,5 @@
 """
-Lightweight API server exposing the Muse LangGraph pipeline.
+Lightweight API server exposing the Sortme LangGraph pipeline.
 Uses FastAPI if available; otherwise provides a noop stub.
 """
 
@@ -35,9 +35,9 @@ except ImportError:  # pragma: no cover - keeps module importable without deps
     FastAPI = None  # type: ignore
 
 # Absolute imports keep uvicorn happy when the project is run from the repo root
-from langgraph import MuseGraph, MuseState
+from langgraph import SortmeGraph, SortmeState
 
-_state_store: Dict[str, MuseState] = {}
+_state_store: Dict[str, SortmeState] = {}
 _lock = threading.Lock()
 CHAT_HISTORY_FILE = ROOT / "chat_history.json"
 
@@ -48,7 +48,7 @@ def _save_state():
         data = {}
         with _lock:
             for thread_id, state in _state_store.items():
-                # Convert MuseState to dict. 
+                # Convert SortmeState to dict. 
                 # If using Pydantic v2, model_dump() is preferred, but dict() works for v1 and our fallback.
                 if hasattr(state, "model_dump"):
                     state_dict = state.model_dump()
@@ -75,23 +75,23 @@ def _load_state():
         
         with _lock:
             for thread_id, state_dict in data.items():
-                # Reconstruct MuseState objects
-                _state_store[thread_id] = MuseState(**state_dict)
+                # Reconstruct SortmeState objects
+                _state_store[thread_id] = SortmeState(**state_dict)
         logger.info(f"Loaded state for {len(_state_store)} threads from {CHAT_HISTORY_FILE}")
     except Exception as e:
         logger.error(f"Failed to load state: {e}")
 
 
-def _get_state(thread_id: str, user_id: str, user_message: str) -> MuseState:
+def _get_state(thread_id: str, user_id: str, user_message: str) -> SortmeState:
     with _lock:
         if thread_id not in _state_store:
-            _state_store[thread_id] = MuseState(user_id=user_id, user_message=user_message)
+            _state_store[thread_id] = SortmeState(user_id=user_id, user_message=user_message)
         else:
             _state_store[thread_id].user_message = user_message
         return _state_store[thread_id]
 
 
-def _apply_ui_events(state: MuseState, ui_events: Optional[List[Dict[str, Any]]]) -> None:
+def _apply_ui_events(state: SortmeState, ui_events: Optional[List[Dict[str, Any]]]) -> None:
     if not ui_events:
         return
     
@@ -104,7 +104,7 @@ def _apply_ui_events(state: MuseState, ui_events: Optional[List[Dict[str, Any]]]
             logger.info(f"[API] Applied clarification choice: {payload}")
 
 
-def _build_response(state: MuseState) -> Dict[str, Any]:
+def _build_response(state: SortmeState) -> Dict[str, Any]:
     return {
         "stylist_response": state.stylist_response,
         "products": state.final_products,
@@ -126,7 +126,7 @@ async def lifespan(app: FastAPI):
     Lifespan context manager for startup and shutdown events.
     """
     # Startup
-    logger.info("Starting up Muse API...")
+    logger.info("Starting up Sortme API...")
     _load_state()
     
     # Verify Qdrant connection (lightweight check)
@@ -141,12 +141,12 @@ async def lifespan(app: FastAPI):
     yield
     
     # Shutdown
-    logger.info("Shutting down Muse API...")
+    logger.info("Shutting down Sortme API...")
     _save_state()
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="Muse API", version="1.0.0", lifespan=lifespan)
+    app = FastAPI(title="Sortme API", version="1.0.0", lifespan=lifespan)
 
     # CORS
     app.add_middleware(
@@ -158,9 +158,9 @@ def create_app() -> FastAPI:
     )
     
     # Initialize graph once
-    graph = MuseGraph()
+    graph = SortmeGraph()
     # Expose graph on app.state for optional reuse (e.g., compatibility endpoints)
-    app.state.muse_graph = graph
+    app.state.sortme_graph = graph
 
     @app.post("/api/chat")
     async def chat_endpoint(payload: dict) -> dict:

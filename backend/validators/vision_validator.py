@@ -57,8 +57,8 @@ class VisionValidator:
         for cand in candidates:
             image_url = cand.get("image_url")
             if image_url:
-                # Standard OpenAI format
-                user_parts.append({"type": "image_url", "image_url": {"url": image_url}})
+                # OpenAI Responses API format
+                user_parts.append({"type": "input_image", "image_url": image_url})
 
         inputs = [
             {
@@ -135,3 +135,4 @@ class VisionValidator:
         base = 0.9 if source == "qdrant" else 0.8
         penalty = min(position * 0.02, 0.2)
         return round(max(0.5, base - penalty), 2)
+

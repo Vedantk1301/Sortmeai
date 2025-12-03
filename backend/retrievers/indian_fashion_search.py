@@ -9,12 +9,11 @@ from urllib.parse import urlparse, urljoin
 
 import requests
 from bs4 import BeautifulSoup
-from dotenv import load_dotenv
 from openai import OpenAI, BadRequestError
 
-load_dotenv()
+from config import Config
 
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+OPENAI_API_KEY = Config.OPENAI_API_KEY
 if not OPENAI_API_KEY:
     raise RuntimeError("OPENAI_API_KEY not set")
 

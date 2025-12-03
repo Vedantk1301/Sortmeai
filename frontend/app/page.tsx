@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useRef, useState, useEffect } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 
 type TextResult = {
   summary?: string;
@@ -135,7 +136,7 @@ export default function Home() {
 
   const runQuery = async (text: string, uiEvents: AgentUiEvent[] = []) => {
     if (!text.trim() && uiEvents.length === 0) return;
-    
+
     const userMsg: Message = { id: Date.now().toString(), role: "user", content: text || "..." };
     setMessages((prev) => [...prev, userMsg]);
     setQuery("");
@@ -152,12 +153,12 @@ export default function Home() {
           ui_events: uiEvents
         })
       });
-      
+
       if (!response.ok) throw new Error("Failed to fetch response");
-      
+
       const payload: AgentResponse = await response.json();
       const result = mapAgentToTextResult(payload);
-      
+
       const aiMsg: Message = {
         id: (Date.now() + 1).toString(),
         role: "ai",
@@ -220,7 +221,12 @@ export default function Home() {
   return (
     <div className="app-container">
       {/* Sidebar - Dossier */}
-      <aside className="sidebar">
+      <motion.aside
+        className="sidebar"
+        initial={{ x: -50, opacity: 0 }}
+        animate={{ x: 0, opacity: 1 }}
+        transition={{ duration: 0.5, ease: "easeOut" }}
+      >
         <div className="sidebar-header">
           <span>Sortme AI</span>
         </div>
@@ -228,7 +234,13 @@ export default function Home() {
         <div className="sidebar-section">
           <div className="sidebar-label">Your Profile</div>
           {loadingProfile ? (
-            <div className="dossier-item">Analyzing...</div>
+            <div className="dossier-item">
+              <span className="loading-dots" style={{ padding: 0 }}>
+                <span className="dot"></span>
+                <span className="dot"></span>
+                <span className="dot"></span>
+              </span>
+            </div>
           ) : (
             <>
               <div className="dossier-item">
@@ -245,106 +257,126 @@ export default function Home() {
               </div>
             </>
           )}
-          <button 
-            className="dossier-item" 
-            style={{ marginTop: "1rem", width: "100%", cursor: "pointer", border: "1px dashed rgba(228, 106, 146, 0.45)", justifyContent: "center" }}
+          <button
+            className="upload-btn"
+            style={{ marginTop: "1rem" }}
             onClick={() => fileRef.current?.click()}
           >
-            + Upload Photo
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+              <polyline points="17 8 12 3 7 8"></polyline>
+              <line x1="12" y1="3" x2="12" y2="15"></line>
+            </svg>
+            Upload Photo
           </button>
-          <input 
-            ref={fileRef} 
-            type="file" 
-            accept="image/*" 
-            style={{ display: "none" }} 
-            onChange={(e) => e.target.files?.[0] && handleUpload(e.target.files[0])} 
+          <input
+            ref={fileRef}
+            type="file"
+            accept="image/*"
+            style={{ display: "none" }}
+            onChange={(e) => e.target.files?.[0] && handleUpload(e.target.files[0])}
           />
         </div>
 
         {profileResult && (
-          <div className="sidebar-section">
+          <motion.div
+            className="sidebar-section"
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+          >
             <div className="sidebar-label">Style DNA</div>
-            <div className="dossier-item" style={{display: 'block'}}>
-              <div style={{marginBottom: '4px'}}>Vibes</div>
+            <div className="dossier-item" style={{ display: 'block' }}>
+              <div style={{ marginBottom: '4px', fontSize: '0.8rem', color: 'var(--text-tertiary)' }}>Vibes</div>
               <div className="dossier-value">{profileResult.style_vibes?.join(", ")}</div>
             </div>
-            <div className="dossier-item" style={{display: 'block'}}>
-              <div style={{marginBottom: '4px'}}>Palette</div>
+            <div className="dossier-item" style={{ display: 'block' }}>
+              <div style={{ marginBottom: '4px', fontSize: '0.8rem', color: 'var(--text-tertiary)' }}>Palette</div>
               <div className="dossier-value">{profileResult.best_palettes?.join(", ")}</div>
             </div>
-          </div>
+          </motion.div>
         )}
-      </aside>
+      </motion.aside>
 
       {/* Main Chat Area */}
       <main className="main-content">
         <div className="chat-scroll-area">
           <div className="chat-container">
-            {messages.length === 0 ? (
-              <div className="hero-empty">
-                <h1 className="hero-title">What are we styling today?</h1>
-                <p className="hero-subtitle">
-                  Ask for outfit ideas, color matches, or upload a photo to define your personal style profile.
-                </p>
-              </div>
-            ) : (
-              messages.map((msg) => (
-                <div key={msg.id} className="message-row">
-                  <div className={`avatar ${msg.role}`}>
-                    {msg.role === "ai" ? "S" : "U"}
-                  </div>
-                  <div className="message-content">
-                    {msg.content}
-                    {msg.agent?.clarification?.question && (msg.agent?.clarification?.options?.length ?? 0) > 0 && (
-                      <div className="clarification-card">
-                        <div className="clarification-question">{msg.agent.clarification.question}</div>
-                        <div className="clarification-options">
-                          {msg.agent.clarification.options?.map((option, idx) => (
-                            <button
-                              type="button"
-                              key={option.id ?? option.label ?? `clar-option-${idx}`}
-                              className="clarification-chip"
-                              onClick={() => handleClarificationSelect(option)}
-                              disabled={loadingText}
-                            >
-                              <span className="clarification-chip-label">{option.label ?? "Option"}</span>
-                              {option.short_description && (
-                                <span className="clarification-chip-sub">{option.short_description}</span>
-                              )}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                    {msg.data && (
-                      <div className="result-grid">
-                        {msg.data.colors && (
-                          <div className="info-card">
-                            <h5>Palette</h5>
-                            <TagList items={msg.data.colors} />
+            <AnimatePresence mode="popLayout">
+              {messages.length === 0 ? (
+                <motion.div
+                  key="hero"
+                  className="hero-empty"
+                  exit={{ opacity: 0, y: -20 }}
+                  transition={{ duration: 0.4 }}
+                >
+                  <h1 className="hero-title">What are we styling today?</h1>
+                  <p className="hero-subtitle">
+                    Ask for outfit ideas, color matches, or upload a photo to define your personal style profile.
+                  </p>
+                </motion.div>
+              ) : (
+                messages.map((msg) => (
+                  <motion.div
+                    key={msg.id}
+                    className={`message-row ${msg.role}`}
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.4, ease: "easeOut" }}
+                  >
+                    <div className={`avatar ${msg.role}`}>
+                      {msg.role === "ai" ? "Sort" : "You"}
+                    </div>
+                    <div className="message-content">
+                      {msg.content}
+                      {msg.agent?.clarification?.question && (msg.agent?.clarification?.options?.length ?? 0) > 0 && (
+                        <motion.div
+                          className="clarification-card"
+                          initial={{ opacity: 0, scale: 0.95 }}
+                          animate={{ opacity: 1, scale: 1 }}
+                          transition={{ delay: 0.2 }}
+                        >
+                          <div className="clarification-question">{msg.agent.clarification.question}</div>
+                          <div className="clarification-options">
+                            {msg.agent.clarification.options?.map((option, idx) => (
+                              <button
+                                type="button"
+                                key={option.id ?? option.label ?? `clar-option-${idx}`}
+                                className="clarification-chip"
+                                onClick={() => handleClarificationSelect(option)}
+                                disabled={loadingText}
+                              >
+                                <span className="clarification-chip-label">{option.label ?? "Option"}</span>
+                                {option.short_description && (
+                                  <span className="clarification-chip-sub">{option.short_description}</span>
+                                )}
+                              </button>
+                            ))}
                           </div>
-                        )}
-                        {msg.data.top_pieces && (
-                          <div className="info-card">
-                            <h5>Key Pieces</h5>
-                            <TagList items={msg.data.top_pieces} />
-                          </div>
-                        )}
-                        {msg.data.occasions && (
-                          <div className="info-card">
-                            <h5>Occasions</h5>
-                            <TagList items={msg.data.occasions} />
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              ))
-            )}
+                        </motion.div>
+                      )}
+                      {msg.data && (
+                        <motion.div
+                          className="result-grid"
+                          initial={{ opacity: 0 }}
+                          animate={{ opacity: 1 }}
+                          transition={{ delay: 0.3 }}
+                        >
+
+                        </motion.div>
+                      )}
+                    </div>
+                  </motion.div>
+                ))
+              )}
+            </AnimatePresence>
+
             {loadingText && (
-              <div className="message-row">
-                <div className="avatar ai">S</div>
+              <motion.div
+                className="message-row ai"
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+              >
+                <div className="avatar ai">Sort</div>
                 <div className="message-content">
                   <div className="loading-dots">
                     <div className="dot"></div>
@@ -352,7 +384,7 @@ export default function Home() {
                     <div className="dot"></div>
                   </div>
                 </div>
-              </div>
+              </motion.div>
             )}
             <div ref={chatEndRef} />
           </div>
@@ -360,7 +392,12 @@ export default function Home() {
 
         {/* Input Area */}
         <div className="input-area-wrapper">
-          <div className="input-container">
+          <motion.div
+            className="input-container"
+            initial={{ y: 50, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            transition={{ delay: 0.2, duration: 0.5, type: "spring", stiffness: 100 }}
+          >
             <form onSubmit={handleSearch}>
               <textarea
                 className="chat-input"
@@ -371,32 +408,31 @@ export default function Home() {
                 onKeyDown={handleKeyDown}
               />
               <div className="input-actions">
-                <button 
-                  type="button" 
+                <button
+                  type="button"
                   className="icon-button"
                   onClick={() => fileRef.current?.click()}
                   title="Upload Profile Image"
                 >
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
-                    <circle cx="8.5" cy="8.5" r="1.5"/>
-                    <polyline points="21 15 16 10 5 21"/>
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+                    <circle cx="8.5" cy="8.5" r="1.5" />
+                    <polyline points="21 15 16 10 5 21" />
                   </svg>
                 </button>
-                <button 
-                  type="submit" 
-                  className="icon-button" 
+                <button
+                  type="submit"
+                  className={`icon-button ${query.trim() ? 'send-btn' : ''}`}
                   disabled={!query.trim() || loadingText}
-                  style={{background: query.trim() ? '#1e1932' : 'transparent', color: query.trim() ? '#fff' : 'inherit'}}
                 >
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                     <line x1="22" y1="2" x2="11" y2="13"></line>
                     <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
                   </svg>
                 </button>
               </div>
             </form>
-          </div>
+          </motion.div>
         </div>
       </main>
     </div>

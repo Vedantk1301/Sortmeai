@@ -1,5 +1,5 @@
 """
-MuseGraph wires the node flow into a sequential execution plan.
+SortmeGraph wires the node flow into a sequential execution plan.
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ from .nodes import (
     WebVisionValidateNode,
     WeatherNode,
 )
-from .state import MuseState
+from .state import SortmeState
 from services.user_profile import UserProfileService
 from agents import StylistAgent
 from services.trends import get_fashion_trends_text
@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 _GLOBAL_TRENDS_CACHE: Dict[str, str] = {}
 
 
-class MuseGraph:
+class SortmeGraph:
     def __init__(self) -> None:
         # User profile service with dedicated Qdrant collection
         try:
@@ -62,7 +62,7 @@ class MuseGraph:
         self.ui_node = UINode()
         self.stylist = StylistAgent() # Added
 
-    async def run_once(self, state: MuseState) -> MuseState:
+    async def run_once(self, state: SortmeState) -> SortmeState:
         # Load user profile from dedicated Qdrant collection
         if self.profile_service:
             try:
@@ -88,7 +88,7 @@ class MuseGraph:
         state.trends_context = _GLOBAL_TRENDS_CACHE.get("trends", "")
 
         # IMPORTANT: If conversation history is empty, this is the FIRST interaction
-        # Automatically show a greeting to make Muse more inviting
+        # Automatically show a greeting to make Sortme more inviting
         if len(state.conversation_history) == 0 and not state.user_message.strip():
             logger.info("[GRAPH] First interaction detected - showing automatic greeting")
             state.mode = "greeting"

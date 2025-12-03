@@ -5,7 +5,7 @@ Retrieval nodes for catalog (Qdrant) and web search.
 from __future__ import annotations
 
 from retrievers import CatalogRetriever, Reranker, WebRetriever
-from ..state import MuseState
+from ..state import SortmeState
 
 
 class CatalogRetrieveNode:
@@ -13,7 +13,7 @@ class CatalogRetrieveNode:
         self.catalog = catalog or CatalogRetriever()
         self.reranker = reranker or Reranker()
 
-    def __call__(self, state: MuseState) -> MuseState:
+    def __call__(self, state: SortmeState) -> SortmeState:
         if not state.fashion_query:
             return state
 
@@ -47,8 +47,9 @@ class WebRetrieveNode:
     def __init__(self, retriever: WebRetriever | None = None) -> None:
         self.retriever = retriever or WebRetriever()
 
-    def __call__(self, state: MuseState) -> MuseState:
+    def __call__(self, state: SortmeState) -> SortmeState:
         query_text = state.user_message
         state.web_candidates = self.retriever.search(query_text, limit=25)
         state.log_event("web_retrieve_node", {"retrieved": len(state.web_candidates)})
         return state
+
