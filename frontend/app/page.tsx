@@ -1,10 +1,6 @@
 "use client";
 
-import { HeroScene } from "@/components/HeroScene";
-import clsx from "clsx";
-import { motion } from "framer-motion";
-import Image from "next/image";
-import { useMemo, useRef, useState } from "react";
+import { FormEvent, useRef, useState, useEffect } from "react";
 
 type TextResult = {
   summary?: string;
@@ -29,44 +25,57 @@ type ProfileResult = {
   uplifts?: string[];
 };
 
-type GalleryCard = { title: string; src: string; badge: string };
+type AgentProduct = {
+  id?: string;
+  title?: string;
+  brand?: string;
+  color?: (string | null)[] | string;
+  tags?: string[];
+};
 
-const heroGallery: GalleryCard[] = [
-  {
-    title: "Editorial off-duty",
-    badge: "Muted pastels",
-    src: "https://images.unsplash.com/photo-1521572267360-ee0c2909d518?auto=format&fit=crop&w=800&q=80"
-  },
-  {
-    title: "City layers",
-    badge: "Metallic lift",
-    src: "https://images.unsplash.com/photo-1524504388940-b1c1722653e1?auto=format&fit=crop&w=800&q=80"
-  },
-  {
-    title: "Weekend ease",
-    badge: "Soft neutrals",
-    src: "https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?auto=format&fit=crop&w=800&q=80"
-  }
-];
+type AgentOutfit = {
+  title?: string;
+  occasion?: string;
+  vibe?: string;
+};
 
-const vibePills = ["Minimal luxe", "Soft street", "Gallery opening", "Muted tailoring", "Beach to bar"];
+type AgentClarificationOption = {
+  id?: string;
+  label?: string;
+  short_description?: string;
+};
 
-function PillRail({ items }: { items: string[] }) {
-  return (
-    <div className="meta-row">
-      {items.map((item) => (
-        <span className="pill" key={item}>
-          {item}
-        </span>
-      ))}
-    </div>
-  );
-}
+type AgentResponse = {
+  stylist_response?: string;
+  products?: AgentProduct[];
+  outfits?: AgentOutfit[];
+  clarification?: {
+    question?: string;
+    options?: AgentClarificationOption[];
+  } | null;
+  disambiguation?: {
+    options?: unknown[];
+  } | null;
+  ui_event?: Record<string, unknown>;
+};
+
+type AgentUiEvent = {
+  type: "clarification_choice";
+  payload: string;
+};
+
+type Message = {
+  id: string;
+  role: "user" | "ai";
+  content: string;
+  data?: TextResult; // For AI messages that have structured data
+  agent?: AgentResponse;
+};
 
 function TagList({ items }: { items?: string[] }) {
-  if (!items || items.length === 0) return <span className="muted">Awaiting insights…</span>;
+  if (!items || items.length === 0) return <span className="dossier-value">Pending...</span>;
   return (
-    <div className="list-row">
+    <div className="tag-cloud">
       {items.map((item) => (
         <span className="tag" key={item}>
           {item}
@@ -76,82 +85,113 @@ function TagList({ items }: { items?: string[] }) {
   );
 }
 
-function GalleryRail() {
-  return (
-    <div className="status-row" aria-label="Inspiration rail">
-      {heroGallery.map((card) => (
-        <div className="status-chip" key={card.title}>
-          <Image src={card.src} alt={card.title} width={42} height={42} style={{ borderRadius: 12 }} />
-          <div>
-            <div className="stat">{card.title}</div>
-            <div className="helper">{card.badge}</div>
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
 export default function Home() {
   const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
-  const [query, setQuery] = useState("Studio-ready looks for an autumn city weekend");
-  const [textResult, setTextResult] = useState<TextResult | null>(null);
+  const [query, setQuery] = useState("");
+  const [messages, setMessages] = useState<Message[]>([]);
   const [profileResult, setProfileResult] = useState<ProfileResult | null>(null);
-  const [uploadLabel, setUploadLabel] = useState<string>("Upload profile image");
   const [loadingText, setLoadingText] = useState(false);
   const [loadingProfile, setLoadingProfile] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
+  const chatEndRef = useRef<HTMLDivElement | null>(null);
+  const threadIdRef = useRef<string>(typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${Date.now()}`);
+  const userIdRef = useRef<string>("demo-user");
 
-  const resolvedSummary = textResult?.summary ?? textResult?.styling_intent;
+  const toStrings = (values: (string | null | undefined)[]) =>
+    values
+      .map((v) => (v ?? "").toString().trim())
+      .filter((v): v is string => v.length > 0);
 
-  const headingAccent = useMemo(
-    () =>
-      ["persona", "driven", "fashion"].map((word, idx) => (
-        <span
-          key={word}
-          style={{
-            background: idx % 2 === 0 ? "linear-gradient(120deg,#5d7df5,#ca337c)" : "linear-gradient(120deg,#1d274c,#5d7df5)",
-            WebkitBackgroundClip: "text",
-            color: "transparent"
-          }}
-        >
-          {word}
-        </span>
-      )),
-    []
-  );
+  const mapAgentToTextResult = (agent?: AgentResponse): TextResult | undefined => {
+    if (!agent) return undefined;
 
-  const handleSearch = async (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    setError(null);
+    const topPieces = toStrings((agent.products ?? []).map((p) => p.title)).slice(0, 8);
+    const colorPool = toStrings(
+      (agent.products ?? []).flatMap((p) => {
+        if (!p.color) return [];
+        if (Array.isArray(p.color)) return p.color;
+        return [p.color];
+      }) as (string | null)[]
+    );
+    const colors = Array.from(new Set(colorPool)).slice(0, 8);
+    const occasions = toStrings((agent.outfits ?? []).map((o) => o.title || o.occasion || o.vibe)).slice(0, 6);
+    const keywords = Array.from(new Set(toStrings((agent.products ?? []).flatMap((p) => p.tags ?? [])))).slice(0, 8);
+
+    return {
+      summary: agent.stylist_response,
+      styling_intent: agent.stylist_response,
+      colors,
+      top_pieces: topPieces,
+      occasions,
+      keywords,
+      tone: "stylist"
+    };
+  };
+
+  // Auto-scroll to bottom
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, loadingText]);
+
+  const runQuery = async (text: string, uiEvents: AgentUiEvent[] = []) => {
+    if (!text.trim() && uiEvents.length === 0) return;
+    
+    const userMsg: Message = { id: Date.now().toString(), role: "user", content: text || "..." };
+    setMessages((prev) => [...prev, userMsg]);
+    setQuery("");
     setLoadingText(true);
+
     try {
-      const response = await fetch(`${apiBase}/api/analyze/text`, {
+      const response = await fetch(`${apiBase}/api/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query })
+        body: JSON.stringify({
+          userId: userIdRef.current,
+          threadId: threadIdRef.current,
+          message: text,
+          ui_events: uiEvents
+        })
       });
-      if (!response.ok) {
-        throw new Error("Search failed. Please check the backend service.");
-      }
-      const payload = await response.json();
-      setTextResult(payload.data ?? payload);
+      
+      if (!response.ok) throw new Error("Failed to fetch response");
+      
+      const payload: AgentResponse = await response.json();
+      const result = mapAgentToTextResult(payload);
+      
+      const aiMsg: Message = {
+        id: (Date.now() + 1).toString(),
+        role: "ai",
+        content: payload.stylist_response ?? result?.styling_intent ?? "Here is what I found for you.",
+        data: result,
+        agent: payload
+      };
+      setMessages((prev) => [...prev, aiMsg]);
     } catch (err) {
-      setError((err as Error).message);
+      const errorMsg: Message = {
+        id: (Date.now() + 1).toString(),
+        role: "ai",
+        content: "I'm having trouble connecting to the stylist engine. Please try again."
+      };
+      setMessages((prev) => [...prev, errorMsg]);
     } finally {
       setLoadingText(false);
     }
   };
 
-  const handleFileInput = () => {
-    fileRef.current?.click();
+  const handleSearch = async (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    await runQuery(query);
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      void runQuery(query);
+    }
   };
 
   const handleUpload = async (file: File) => {
-    setError(null);
     setLoadingProfile(true);
-    setUploadLabel(file.name);
     try {
       const form = new FormData();
       form.append("image", file);
@@ -159,179 +199,206 @@ export default function Home() {
         method: "POST",
         body: form
       });
-      if (!response.ok) {
-        throw new Error("Profile analysis failed. Please verify backend is running.");
-      }
+      if (!response.ok) throw new Error("Profile upload failed");
       const payload = await response.json();
       setProfileResult(payload.data ?? payload);
     } catch (err) {
-      setError((err as Error).message);
+      console.error(err);
+      alert("Could not analyze profile image.");
     } finally {
       setLoadingProfile(false);
     }
   };
 
-  const onFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-    void handleUpload(file);
+  const handleClarificationSelect = async (option: AgentClarificationOption) => {
+    if (loadingText) return;
+    const label = option.label ?? "Refine my search";
+    const payload = option.id ?? option.label ?? "clarification_choice";
+    await runQuery(label, [{ type: "clarification_choice", payload }]);
   };
 
   return (
-    <div className="page-shell">
-      <header className={clsx("nav-bar", "glass")}>
-        <div className="nav-left">
-          <div className="orb" />
-          <span className="brand">Sortme AI</span>
-          <div className="pill pill-ghost">Fashion discovery OS</div>
+    <div className="app-container">
+      {/* Sidebar - Dossier */}
+      <aside className="sidebar">
+        <div className="sidebar-header">
+          <span>Sortme AI</span>
         </div>
-        <div className="nav-links">
-          {["Looks", "Fits", "Palette", "Wardrobe"].map((item) => (
-            <span className="pill" key={item}>
-              {item}
-            </span>
-          ))}
-        </div>
-        <div className="nav-actions">
-          <button className="button chip">Sign in</button>
-          <button className="button primary">Launch Studio</button>
-        </div>
-      </header>
 
-      <div className="hero-grid">
-        <motion.section
-          className={clsx("hero-copy", "glass")}
-          initial={{ opacity: 0, y: 14 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.4 }}
-        >
-          <span className="gradient-chip">
-            <span>GPT-5-mini powered</span> • Vision + taste
-          </span>
-          <h1>
-            Persona-{headingAccent[0]} {headingAccent[1]} {headingAccent[2]}
-          </h1>
-          <p>Upload a profile, ask in natural language, and watch Sortme AI surface tailored looks, palettes, and must-have pieces.</p>
-          <PillRail items={vibePills} />
-
-          <div className={clsx("search-panel", "glass")}>
-            <div className="action-grid">
-              <form className="search-form" onSubmit={handleSearch}>
-                <input
-                  className="text-input"
-                  placeholder="Search looks, moods, or exact pieces"
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                />
-                <button className="primary-btn" type="submit" disabled={loadingText}>
-                  {loadingText ? "Asking..." : "Ask Sortme AI"}
-                </button>
-              </form>
-
-              <div
-                className="upload-tile"
-                role="button"
-                onClick={handleFileInput}
-                onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && handleFileInput()}
-                tabIndex={0}
-              >
-                <div className="upload-icon">+</div>
-                <div>
-                  <div className="stat">{loadingProfile ? "Analyzing profile…" : "Profile-ready in one tap"}</div>
-                  <div className="helper">{uploadLabel}</div>
-                </div>
-                <input ref={fileRef} type="file" accept="image/*" style={{ display: "none" }} onChange={onFileChange} />
+        <div className="sidebar-section">
+          <div className="sidebar-label">Your Profile</div>
+          {loadingProfile ? (
+            <div className="dossier-item">Analyzing...</div>
+          ) : (
+            <>
+              <div className="dossier-item">
+                <span>Gender</span>
+                <span className="dossier-value">{profileResult?.gender ?? "-"}</span>
               </div>
-            </div>
-            <GalleryRail />
-            {error && <div className="error">{error}</div>}
-          </div>
-        </motion.section>
+              <div className="dossier-item">
+                <span>Skin Tone</span>
+                <span className="dossier-value">{profileResult?.skin_tone ?? "-"}</span>
+              </div>
+              <div className="dossier-item">
+                <span>Undertone</span>
+                <span className="dossier-value">{profileResult?.undertone ?? "-"}</span>
+              </div>
+            </>
+          )}
+          <button 
+            className="dossier-item" 
+            style={{ marginTop: "1rem", width: "100%", cursor: "pointer", border: "1px dashed rgba(228, 106, 146, 0.45)", justifyContent: "center" }}
+            onClick={() => fileRef.current?.click()}
+          >
+            + Upload Photo
+          </button>
+          <input 
+            ref={fileRef} 
+            type="file" 
+            accept="image/*" 
+            style={{ display: "none" }} 
+            onChange={(e) => e.target.files?.[0] && handleUpload(e.target.files[0])} 
+          />
+        </div>
 
-        <motion.section
-          className="visual-panel"
-          initial={{ opacity: 0, y: 18 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.6, delay: 0.1 }}
-        >
-          <div className="canvas-card">
-            <HeroScene />
-          </div>
-          <div className="floating-panel">
-            <h4>Profile dossier</h4>
-            <div className="list-row">
-              <span className="pill">{profileResult?.gender ?? "Gender: pending"}</span>
-              <span className="pill">{profileResult?.skin_tone ?? "Skin tone: pending"}</span>
-              <span className="pill">{profileResult?.undertone ?? "Undertone: pending"}</span>
+        {profileResult && (
+          <div className="sidebar-section">
+            <div className="sidebar-label">Style DNA</div>
+            <div className="dossier-item" style={{display: 'block'}}>
+              <div style={{marginBottom: '4px'}}>Vibes</div>
+              <div className="dossier-value">{profileResult.style_vibes?.join(", ")}</div>
             </div>
-            <div className="meta-row">
-              {(profileResult?.style_vibes ?? ["Soft street", "Editorial ease", "Gallery ready"]).map((vibe) => (
-                <span key={vibe} className="tag">
-                  {vibe}
-                </span>
-              ))}
+            <div className="dossier-item" style={{display: 'block'}}>
+              <div style={{marginBottom: '4px'}}>Palette</div>
+              <div className="dossier-value">{profileResult.best_palettes?.join(", ")}</div>
             </div>
-            <div className="helper">Upload a clear portrait; we infer palette, vibe, and fit guidance automatically.</div>
           </div>
-        </motion.section>
-      </div>
+        )}
+      </aside>
 
-      <section className="insight-grid">
-        <div className={clsx("panel", "glass")}>
-          <h3>Search intelligence</h3>
-          <p className="helper">Structured results from the OpenAI Responses API (text-to-styling).</p>
-          <div className="mini-card">
-            <div className="stat">{resolvedSummary ?? "No search yet"}</div>
-            <div className="helper">{textResult?.tone ?? textResult?.styling_intent ?? "Try a prompt like “Brunch-ready monochrome in linen”"}</div>
-          </div>
-
-          <div className="result-grid">
-            <div className="mini-card">
-              <h5>Keywords</h5>
-              <TagList items={textResult?.keywords} />
-            </div>
-            <div className="mini-card">
-              <h5>Colors</h5>
-              <TagList items={textResult?.colors} />
-            </div>
-            <div className="mini-card">
-              <h5>Pieces</h5>
-              <TagList items={textResult?.top_pieces} />
-            </div>
-            <div className="mini-card">
-              <h5>Occasions</h5>
-              <TagList items={textResult?.occasions} />
-            </div>
+      {/* Main Chat Area */}
+      <main className="main-content">
+        <div className="chat-scroll-area">
+          <div className="chat-container">
+            {messages.length === 0 ? (
+              <div className="hero-empty">
+                <h1 className="hero-title">What are we styling today?</h1>
+                <p className="hero-subtitle">
+                  Ask for outfit ideas, color matches, or upload a photo to define your personal style profile.
+                </p>
+              </div>
+            ) : (
+              messages.map((msg) => (
+                <div key={msg.id} className="message-row">
+                  <div className={`avatar ${msg.role}`}>
+                    {msg.role === "ai" ? "S" : "U"}
+                  </div>
+                  <div className="message-content">
+                    {msg.content}
+                    {msg.agent?.clarification?.question && (msg.agent?.clarification?.options?.length ?? 0) > 0 && (
+                      <div className="clarification-card">
+                        <div className="clarification-question">{msg.agent.clarification.question}</div>
+                        <div className="clarification-options">
+                          {msg.agent.clarification.options?.map((option, idx) => (
+                            <button
+                              type="button"
+                              key={option.id ?? option.label ?? `clar-option-${idx}`}
+                              className="clarification-chip"
+                              onClick={() => handleClarificationSelect(option)}
+                              disabled={loadingText}
+                            >
+                              <span className="clarification-chip-label">{option.label ?? "Option"}</span>
+                              {option.short_description && (
+                                <span className="clarification-chip-sub">{option.short_description}</span>
+                              )}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {msg.data && (
+                      <div className="result-grid">
+                        {msg.data.colors && (
+                          <div className="info-card">
+                            <h5>Palette</h5>
+                            <TagList items={msg.data.colors} />
+                          </div>
+                        )}
+                        {msg.data.top_pieces && (
+                          <div className="info-card">
+                            <h5>Key Pieces</h5>
+                            <TagList items={msg.data.top_pieces} />
+                          </div>
+                        )}
+                        {msg.data.occasions && (
+                          <div className="info-card">
+                            <h5>Occasions</h5>
+                            <TagList items={msg.data.occasions} />
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))
+            )}
+            {loadingText && (
+              <div className="message-row">
+                <div className="avatar ai">S</div>
+                <div className="message-content">
+                  <div className="loading-dots">
+                    <div className="dot"></div>
+                    <div className="dot"></div>
+                    <div className="dot"></div>
+                  </div>
+                </div>
+              </div>
+            )}
+            <div ref={chatEndRef} />
           </div>
         </div>
 
-        <div className={clsx("panel", "glass")}>
-          <h3>Profile insights</h3>
-          <p className="helper">Vision-powered GPT-5-mini analysis from your profile upload.</p>
-          <div className="result-grid">
-            <div className="mini-card">
-              <h5>Palette</h5>
-              <TagList items={profileResult?.best_palettes} />
-            </div>
-            <div className="mini-card">
-              <h5>Vibes</h5>
-              <TagList items={profileResult?.style_vibes} />
-            </div>
-            <div className="mini-card">
-              <h5>Fit notes</h5>
-              <TagList items={profileResult?.fit_notes} />
-            </div>
-            <div className="mini-card">
-              <h5>Priorities</h5>
-              <TagList items={profileResult?.pieces_to_prioritize ?? profileResult?.uplifts} />
-            </div>
-            <div className="mini-card">
-              <h5>Avoid</h5>
-              <TagList items={profileResult?.avoid} />
-            </div>
+        {/* Input Area */}
+        <div className="input-area-wrapper">
+          <div className="input-container">
+            <form onSubmit={handleSearch}>
+              <textarea
+                className="chat-input"
+                placeholder="Describe an occasion, vibe, or piece of clothing..."
+                rows={1}
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={handleKeyDown}
+              />
+              <div className="input-actions">
+                <button 
+                  type="button" 
+                  className="icon-button"
+                  onClick={() => fileRef.current?.click()}
+                  title="Upload Profile Image"
+                >
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+                    <circle cx="8.5" cy="8.5" r="1.5"/>
+                    <polyline points="21 15 16 10 5 21"/>
+                  </svg>
+                </button>
+                <button 
+                  type="submit" 
+                  className="icon-button" 
+                  disabled={!query.trim() || loadingText}
+                  style={{background: query.trim() ? '#1e1932' : 'transparent', color: query.trim() ? '#fff' : 'inherit'}}
+                >
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <line x1="22" y1="2" x2="11" y2="13"></line>
+                    <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+                  </svg>
+                </button>
+              </div>
+            </form>
           </div>
         </div>
-      </section>
+      </main>
     </div>
   );
 }

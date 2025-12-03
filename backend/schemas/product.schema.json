@@ -1,0 +1,54 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Product",
+  "type": "object",
+  "description": "Normalized product document used across Qdrant, web search, and validators.",
+  "properties": {
+    "id": { "type": "string" },
+    "title": { "type": "string" },
+    "brand": { "type": ["string", "null"] },
+    "price": {
+      "type": "object",
+      "properties": {
+        "value": { "type": ["number", "null"] },
+        "currency": { "type": ["string", "null"] }
+      },
+      "required": ["value", "currency"],
+      "additionalProperties": false
+    },
+    "image_url": {
+      "type": "string",
+      "format": "uri"
+    },
+    "url": {
+      "type": ["string", "null"],
+      "format": "uri"
+    },
+    "color": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "pattern": { "type": ["string", "null"] },
+    "fit": { "type": ["string", "null"] },
+    "fabric": { "type": ["string", "null"] },
+    "gender": { "type": ["string", "null"] },
+    "tags": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "attributes": {
+      "type": "object",
+      "description": "Raw attributes kept for downstream validator context."
+    },
+    "source": {
+      "type": "string",
+      "enum": ["qdrant", "web", "manual"]
+    },
+    "score": {
+      "type": ["number", "null"],
+      "description": "Retriever or reranker score before validation."
+    }
+  },
+  "required": ["id", "title", "image_url", "color", "source"],
+  "additionalProperties": false
+}

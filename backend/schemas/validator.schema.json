@@ -1,0 +1,42 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ValidatorResult",
+  "type": "object",
+  "description": "Vision validator output used to gate products before styling.",
+  "properties": {
+    "valid": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "score": { "type": "number" },
+          "tag": {
+            "type": "string",
+            "enum": ["best_match", "good_match", "close_match", "web_match", "fallback"]
+          },
+          "notes": {
+            "type": ["string", "null"],
+            "description": "Optional short note about why this product fits."
+          }
+        },
+        "required": ["id", "score", "tag"],
+        "additionalProperties": false
+      }
+    },
+    "invalid": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "reason": { "type": "string" }
+        },
+        "required": ["id", "reason"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["valid", "invalid"],
+  "additionalProperties": false
+}

@@ -1,0 +1,68 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "FashionQuery",
+  "type": "object",
+  "description": "Structured user intent extracted from natural language.",
+  "properties": {
+    "item_type": {
+      "type": "string",
+      "description": "Category of apparel or accessory (e.g., shirt, saree, sneakers)."
+    },
+    "colors": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Explicit colors requested by the user in plain text."
+    },
+    "color_mode": {
+      "type": "string",
+      "enum": ["all_required", "any", "palette", "unknown"],
+      "description": "How colors should be combined; all_required means every color must be present together."
+    },
+    "pattern": {
+      "type": ["string", "null"],
+      "description": "Print or weave pattern such as checks, stripes, floral, solid."
+    },
+    "fit": {
+      "type": ["string", "null"],
+      "description": "Fit preference (e.g., slim, relaxed, oversized, straight)."
+    },
+    "fabric": {
+      "type": ["string", "null"],
+      "description": "Fabric or material callouts (e.g., linen, cotton, silk, denim)."
+    },
+    "gender": {
+      "type": ["string", "null"],
+      "enum": ["men", "women", "unisex", "kids", "unknown", null],
+      "description": "Target gender or audience."
+    },
+    "occasion": {
+      "type": ["string", "null"],
+      "description": "Occasion or context such as wedding, formal, casual, athleisure."
+    },
+    "price": {
+      "type": "object",
+      "properties": {
+        "min": { "type": ["number", "null"] },
+        "max": { "type": ["number", "null"] },
+        "currency": {
+          "type": ["string", "null"],
+          "description": "ISO 4217 currency code if known."
+        }
+      },
+      "required": ["min", "max"],
+      "additionalProperties": false
+    },
+    "style_notes": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Free-form stylistic hints captured from the request."
+    },
+    "disambiguation": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Tokens that require user clarification (e.g., orange-white checks could mean combo or either)."
+    }
+  },
+  "required": ["item_type"],
+  "additionalProperties": false
+}

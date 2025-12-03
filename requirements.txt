@@ -4,3 +4,8 @@ openai
 python-multipart
 pydantic
 python-dotenv
+httpx
+numpy
+requests
+qdrant-client
+mem0ai

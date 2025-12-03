@@ -1,0 +1,16 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "BroadIntent",
+  "type": "object",
+  "properties": {
+    "query_type": { "enum": ["broad"] },
+    "destination": { "type": ["string", "null"] },
+    "occasion": { "type": ["string", "null"] },
+    "gender": { "type": ["string", "null"] },
+    "raw_query": { "type": ["string", "null"] },
+    "web_queries": { "type": "array", "items": { "type": "string" } },
+    "product_queries": { "type": "array", "items": { "type": "string" } }
+  },
+  "required": ["query_type"],
+  "additionalProperties": true
+}

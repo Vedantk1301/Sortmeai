@@ -1,24 +1,34 @@
+from __future__ import annotations
+
 import base64
 import json
+import logging
 import os
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, HTTPException, UploadFile
-from fastapi.middleware.cors import CORSMiddleware
 from openai import OpenAI
 from pydantic import BaseModel
+
+from api.server import create_app
+from config import Config
+from langgraph import MuseGraph, MuseState
 
 # Load environment variables from .env for local development
 load_dotenv()
 
+logger = logging.getLogger(__name__)
+
 
 class TextQuery(BaseModel):
     query: str
+    userId: Optional[str] = None
+    threadId: Optional[str] = None
 
 
 def build_client() -> OpenAI:
-    api_key = os.getenv("OPENAI_API_KEY")
+    api_key = Config.OPENAI_API_KEY or os.getenv("OPENAI_API_KEY")
     if not api_key:
         raise RuntimeError("OPENAI_API_KEY environment variable is required.")
     return OpenAI(api_key=api_key)
@@ -26,19 +36,9 @@ def build_client() -> OpenAI:
 
 client = build_client()
 
-app = FastAPI(
-    title="Sortme AI Backend",
-    description="Fashion discovery backend powered by the OpenAI Responses API.",
-    version="0.1.0",
-)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# Reuse the LangGraph-powered FastAPI app (includes /api/chat)
+app: FastAPI = create_app()
+compat_graph: Optional[MuseGraph] = getattr(app.state, "muse_graph", None)
 
 
 def parse_response_json(response: Any) -> Dict[str, Any]:
@@ -53,6 +53,60 @@ def parse_response_json(response: Any) -> Dict[str, Any]:
         raise HTTPException(status_code=500, detail="Model returned non-JSON output.") from exc
 
 
+def _unique(seq: List[str], limit: int = 8) -> List[str]:
+    seen: List[str] = []
+    for item in seq:
+        if not item:
+            continue
+        if item not in seen:
+            seen.append(item)
+        if len(seen) >= limit:
+            break
+    return seen
+
+
+def _collect_colors(products: Optional[List[Dict[str, Any]]]) -> List[str]:
+    colors: List[str] = []
+    for product in products or []:
+        vals = product.get("color") or []
+        if isinstance(vals, str):
+            vals = [vals]
+        for val in vals:
+            try:
+                colors.append(str(val))
+            except Exception:
+                continue
+    return _unique([c.strip() for c in colors if c], limit=10)
+
+
+def _collect_titles(products: Optional[List[Dict[str, Any]]]) -> List[str]:
+    titles = []
+    for product in products or []:
+        title = product.get("title")
+        if title:
+            titles.append(str(title))
+    return _unique(titles, limit=8)
+
+
+def _collect_outfit_labels(outfits: Optional[List[Dict[str, Any]]]) -> List[str]:
+    labels = []
+    for outfit in outfits or []:
+        for key in ("title", "occasion", "vibe"):
+            if outfit.get(key):
+                labels.append(str(outfit[key]))
+                break
+    return _unique(labels, limit=6)
+
+
+def _collect_keywords(products: Optional[List[Dict[str, Any]]]) -> List[str]:
+    keywords: List[str] = []
+    for product in products or []:
+        tags = product.get("tags") or []
+        if isinstance(tags, list):
+            keywords.extend([str(tag) for tag in tags if tag])
+    return _unique(keywords, limit=10)
+
+
 @app.get("/health")
 def health() -> Dict[str, str]:
     return {"status": "ok"}
@@ -60,28 +114,49 @@ def health() -> Dict[str, str]:
 
 @app.post("/api/analyze/text")
 async def analyze_text(payload: TextQuery) -> Dict[str, Any]:
-    prompt = (
-        "You are Sortme AI, a fashion discovery assistant. "
-        "Analyze the user's request, then respond ONLY with a compact JSON object containing: "
-        "summary, styling_intent, keywords (array), colors (array), top_pieces (array), occasions (array), tone. "
-        "Stay brief and avoid brand names unless implied."
-        f" User query: {payload.query}"
-    )
+    """
+    Compatibility endpoint that wraps the LangGraph pipeline and returns a
+    simplified shape expected by the existing frontend cards.
+    """
+    if not payload.query.strip():
+        raise HTTPException(status_code=400, detail="Query is required.")
+    if compat_graph is None:
+        raise HTTPException(status_code=503, detail="LangGraph agent is not available.")
 
-    response = client.responses.create(
-        model=os.getenv("OPENAI_MODEL", "gpt-4.1-mini"),
-        input=[
-            {
-                "role": "system",
-                "content": [{"type": "text", "text": "Return structured JSON for fashion styling insights."}],
-            },
-            {"role": "user", "content": [{"type": "input_text", "text": prompt}]},
-        ],
-        response_format={"type": "json_object"},
-        max_output_tokens=500,
-    )
+    user_id = payload.userId or "compat-user"
+    thread_id = payload.threadId or "compat-thread"
 
-    return {"data": parse_response_json(response), "response_id": response.id}
+    state = MuseState(user_id=user_id, user_message=payload.query)
+    # Keep per-thread state to preserve clarification choices if the client reuses the thread_id
+    state.thread_id = thread_id  # type: ignore[attr-defined]
+
+    state = await compat_graph.run_once(state)
+
+    data = {
+        "summary": state.stylist_response,
+        "styling_intent": state.stylist_response,
+        "keywords": _collect_keywords(state.final_products),
+        "colors": _collect_colors(state.final_products),
+        "top_pieces": _collect_titles(state.final_products),
+        "occasions": _collect_outfit_labels(state.outfits),
+        "tone": "stylist",
+    }
+
+    agent_view = {
+        "stylist_response": state.stylist_response,
+        "products": state.final_products,
+        "outfits": state.outfits,
+        "clarification": {
+            "question": state.clarification_question,
+            "options": state.clarification_options,
+        }
+        if state.clarification_question
+        else None,
+        "disambiguation": {"options": state.disambiguation_cards} if state.disambiguation_cards else None,
+        "ui_event": state.ui_event,
+    }
+
+    return {"data": data, "agent": agent_view}
 
 
 @app.post("/api/analyze/profile")
@@ -102,7 +177,7 @@ async def analyze_profile(image: UploadFile = File(...)) -> Dict[str, Any]:
     )
 
     response = client.responses.create(
-        model=os.getenv("OPENAI_MODEL", "gpt-4.1-mini"),
+        model=Config.OPENAI_MODEL,
         input=[
             {
                 "role": "system",
