@@ -31,19 +31,24 @@ class WebSearchClient:
             ts, hits = self._cache[query]
             if now - ts < self.cache_ttl:
                 return hits
-        resp = self.client.responses.create(
-            model=Config.WEATHER_MODEL,
-            input=[{"role": "user", "content": query}],
-            tools=[{"type": "web_search", "results": max_results}],
-            tool_choice="auto",
-        )
-        hits: List[Dict[str, Any]] = []
-        for item in resp.output or []:
-            if item.type == "web_search_result":
-                hits.extend(item.content or [])
-        hits = hits[:max_results]
-        self._cache[query] = (now, hits)
-        return hits
+        try:
+            resp = self.client.responses.create(
+                model=Config.WEATHER_MODEL,
+                input=[{"role": "user", "content": query}],
+                tools=[{"type": "web_search"}],  # modern Responses API shape
+                tool_choice="auto",
+            )
+            hits: List[Dict[str, Any]] = []
+            for item in resp.output or []:
+                if item.type == "web_search_result":
+                    hits.extend(item.content or [])
+            hits = hits[:max_results]
+            self._cache[query] = (now, hits)
+            return hits
+        except Exception as exc:  # graceful fallback instead of 500
+            import logging
+            logging.getLogger(__name__).warning(f"[WEB_SEARCH] Failed web search '{query}': {exc}")
+            return []
 
     def extract_rules(self, search_results: List[Dict[str, Any]]) -> List[str]:
         if not search_results:

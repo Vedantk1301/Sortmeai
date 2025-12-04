@@ -24,11 +24,17 @@ class WebRetriever:
             return []
 
     def _normalise(self, idx: int, item: Dict[str, Any]) -> Dict[str, Any]:
+        web_price = item.get("price")
         return {
             "id": f"web-{idx}",
             "title": item.get("name") or f"Web result {idx}",
             "brand": "WebSource",
-            "price": {"value": item.get("price"), "currency": "INR"},
+            "price": {
+                "current": web_price if web_price is not None else 0,
+                "currency": "₹",
+                "compare_at": None,
+                "discount_pct": None,
+            },
             "image_url": item.get("imageUrl"),
             "url": item.get("sourceUrl"),
             "color": [],

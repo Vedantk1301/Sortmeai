@@ -12,6 +12,7 @@ from qdrant_client.http import models as rest
 from config import Config
 from services.deepinfra import embed_catalog_sync
 from services.qdrant_client import get_qdrant_client
+from services.search_logging import summarize_products
 
 
 class CatalogRetriever:
@@ -19,18 +20,38 @@ class CatalogRetriever:
         self.client = client or get_qdrant_client()
         self.logger = logging.getLogger(__name__)
 
-    def search(self, query: Dict[str, Any], top_k: int = Config.SEARCH_LIMIT) -> List[Dict[str, Any]]:
+    def search(
+        self,
+        query: Dict[str, Any],
+        top_k: int = Config.SEARCH_LIMIT,
+        trace_id: str | None = None,
+        capture_debug: bool = False,
+    ) -> List[Dict[str, Any]] | tuple[List[Dict[str, Any]], Dict[str, Any]]:
         import time
+
+        trace_label = trace_id or f"qdrant-{int(time.time() * 1000)}"
         start_time = time.time()
         query_text = self._to_query_text(query)
-        self.logger.info(f"[QDRANT] Starting search | query_text='{query_text}' | top_k={top_k} | collection={Config.CATALOG_COLLECTION}")
+        filter_summary = self._filter_summary(query)
+        debug: Dict[str, Any] = {
+            "trace_id": trace_label,
+            "query_text": query_text,
+            "filters": filter_summary,
+            "collection": Config.CATALOG_COLLECTION,
+            "requested_top_k": top_k,
+        }
+        self.logger.info(
+            f"[QDRANT][{trace_label}] Starting search | query_text='{query_text}' | "
+            f"top_k={top_k} | collection={Config.CATALOG_COLLECTION} | filters={filter_summary}"
+        )
         
         try:
             # Embedding
             embed_start = time.time()
             vector = embed_catalog_sync([query_text])[0]
             embed_time = time.time() - embed_start
-            self.logger.info(f"[QDRANT] Embedding completed | time={embed_time:.3f}s")
+            debug["timing"] = {"embed": embed_time}
+            self.logger.info(f"[QDRANT][{trace_label}] Embedding completed | time={embed_time:.3f}s")
             
             # Build filters - ONLY gender and price
             filters = []
@@ -56,25 +77,41 @@ class CatalogRetriever:
             )
             search_time = time.time() - search_start
             num_results = len(result.points or [])
-            self.logger.info(f"[QDRANT] Vector search completed | results={num_results} | time={search_time:.3f}s")
+            debug["timing"]["search"] = search_time
+            debug["retrieved_count"] = num_results
+            self.logger.info(
+                f"[QDRANT][{trace_label}] Vector search completed | results={num_results} | time={search_time:.3f}s"
+            )
             
-            products = [self._to_product(point, query) for point in (result.points or [])]
+            raw_products = [self._to_product(point, query) for point in (result.points or [])]
+            debug["raw_preview"] = summarize_products(raw_products, limit=8)
             
             # 1. Junk Filter
-            products = [p for p in products if not self._is_disallowed_product(p)]
+            products = [p for p in raw_products if not self._is_disallowed_product(p)]
             
             # 2. Brand Cap
             products = self._rebalance_brand_pool(products)
             
             # Trim to requested top_k
             products = products[:top_k]
+            debug["post_filter_preview"] = summarize_products(products, limit=8)
+            debug["returned_count"] = len(products)
 
             total_time = time.time() - start_time
-            self.logger.info(f"[QDRANT] Search complete | total_time={total_time:.3f}s | embed={embed_time:.3f}s | search={search_time:.3f}s")
-            return products
+            debug["total_time"] = total_time
+            self.logger.info(
+                f"[QDRANT][{trace_label}] Search complete | total_time={total_time:.3f}s | "
+                f"embed={embed_time:.3f}s | search={search_time:.3f}s | returned={len(products)}"
+            )
+            return (products, debug) if capture_debug else products
         except Exception as exc:
-            self.logger.warning(f"[QDRANT] Search fallback to heuristic (embedding error) | error={str(exc)}", exc_info=exc)
-            return [self._mock_product(idx, query, source="qdrant-fallback") for idx in range(min(top_k, 8))]
+            debug["error"] = str(exc)
+            self.logger.warning(
+                f"[QDRANT][{trace_label}] Search fallback to heuristic (embedding error) | error={str(exc)}",
+                exc_info=exc,
+            )
+            fallback = [self._mock_product(idx, query, source="qdrant-fallback") for idx in range(min(top_k, 8))]
+            return (fallback, debug) if capture_debug else fallback
 
     def _to_query_text(self, query: Dict[str, Any]) -> str:
         # Build query text from raw_query or item_type only
@@ -149,7 +186,33 @@ class CatalogRetriever:
     def _to_product(self, point: Any, query: Dict[str, Any]) -> Dict[str, Any]:
         payload = point.payload or {}
         attrs = payload.get("attributes") or {}
-        price_val = attrs.get("price_inr") or payload.get("price") or None
+        
+        # Extract pricing info
+        # Check if payload has a price dict (shouldn't happen, but be defensive)
+        payload_price = payload.get("price")
+        if isinstance(payload_price, dict):
+            # Price is already a dict - extract current value from it
+            current_price = payload_price.get("current") or payload_price.get("value") or attrs.get("price_inr")
+        else:
+            # Price is a number or None
+            current_price = attrs.get("price_inr") or payload_price or None
+        
+        mrp = attrs.get("mrp") or attrs.get("compare_at_price") or payload.get("mrp") or None
+        
+        # Calculate discount percentage
+        discount_pct = 0
+        if current_price and mrp and mrp > current_price:
+            discount_pct = ((mrp - current_price) / mrp) * 100
+        
+        # Build price object matching frontend expectations
+        # Ensure current is a number (0 if None) to avoid React rendering errors
+        price_obj = {
+            "current": current_price if current_price is not None else 0,
+            "currency": "₹",
+            "compare_at": mrp if mrp and mrp > (current_price or 0) else None,
+            "discount_pct": discount_pct if discount_pct > 0 else None,
+        }
+        
         colors = payload.get("color") or payload.get("colors") or attrs.get("color") or []
         if isinstance(colors, str):
             colors = [colors]
@@ -157,7 +220,7 @@ class CatalogRetriever:
             "id": str(payload.get("product_id") or payload.get("id") or point.id),
             "title": payload.get("title") or attrs.get("title") or query.get("item_type", "product"),
             "brand": payload.get("brand") or attrs.get("brand"),
-            "price": {"value": price_val, "currency": "INR"},
+            "price": price_obj,
             "image_url": payload.get("primary_image") or payload.get("image_url"),
             "url": payload.get("url"),
             "color": colors,
@@ -179,7 +242,12 @@ class CatalogRetriever:
             "id": f"{source}-{idx}",
             "title": f"{title_color.title()} {item_type.title()} {idx}",
             "brand": "Fallback",
-            "price": {"value": None, "currency": None},
+            "price": {
+                "current": 0,  # Fallback products don't have real prices
+                "currency": "₹",
+                "compare_at": None,
+                "discount_pct": None,
+            },
             "image_url": f"https://example.com/{source}-{idx}.jpg",
             "url": None,
             "color": color,
@@ -192,3 +260,16 @@ class CatalogRetriever:
             "source": source,
             "score": 1.0 - (idx * 0.01),
         }
+
+    def _filter_summary(self, query: Dict[str, Any]) -> Dict[str, Any]:
+        """Lightweight, serializable view of filters applied to Qdrant."""
+        gender = query.get("gender")
+        min_price = query.get("min_price")
+        max_price = query.get("max_price")
+        summary: Dict[str, Any] = {}
+        if gender:
+            # Unisex is allowed automatically for men/women in _gender_filter
+            summary["gender"] = gender
+        if min_price is not None or max_price is not None:
+            summary["price_inr"] = {"min": min_price, "max": max_price}
+        return summary

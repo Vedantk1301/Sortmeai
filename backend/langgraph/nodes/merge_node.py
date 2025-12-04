@@ -13,7 +13,17 @@ class MergeNode:
     def __call__(self, state: SortmeState) -> SortmeState:
         merged = list(state.qdrant_valid) + list(state.web_valid)
         merged.sort(key=lambda item: item.get("validator_score", 0), reverse=True)
-        state.final_products = merged[:8]
+        
+        # Deduplicate by ID
+        seen_ids = set()
+        deduped = []
+        for item in merged:
+            item_id = item.get("id")
+            if item_id not in seen_ids:
+                seen_ids.add(item_id)
+                deduped.append(item)
+        
+        state.final_products = deduped[:8]
         state.log_event("merge_node", {"final_count": len(state.final_products)})
         return state
 

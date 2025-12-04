@@ -19,27 +19,37 @@ class LLM:
     def chat(self, model: str, messages: List[Dict[str, Any]], **kwargs: Any) -> str:
         """
         Thin wrapper over Responses API to keep a chat-like interface.
-        - Uses low reasoning effort.
-        - Drops temperature (not supported on these models).
+        - Stays on Responses API for all models.
+        - For non-reasoning models (e.g., gpt-4.1-nano), omits reasoning and allows temperature.
         """
         response_format = kwargs.pop("response_format", None)
+        temperature = kwargs.pop("temperature", 0.7)
+        max_output_tokens = kwargs.pop("max_output_tokens", 2048)
+
         text_format = None
         if isinstance(response_format, dict) and response_format.get("type") in ("json_object", "json_schema"):
-            # Map old-style response_format to Responses API text.format
             text_format = response_format
 
         params: Dict[str, Any] = {
             "model": model,
             "input": messages,
-            "reasoning": {"effort": "low"},
-            "max_output_tokens": kwargs.pop("max_output_tokens", 2048),
+            "max_output_tokens": max_output_tokens,
         }
+
+        # Add text format for structured outputs
         if text_format:
             params["text"] = {"format": text_format}
-        # Drop unsupported keys
-        kwargs.pop("temperature", None)
+
+        # For reasoning-capable models (gpt-5*), keep low reasoning; for nano path, drop it and allow temperature.
+        if not model.startswith("gpt-4.1"):
+            params["reasoning"] = {"effort": "low"}
+        else:
+            params["temperature"] = temperature
+
+        # Remove keys we handled
         kwargs.pop("response_format", None)
         params.update(kwargs)
+
         resp = self.client.responses.create(**params)
         # Prefer output_text; fallback to first text content
         if getattr(resp, "output_text", None):

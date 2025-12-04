@@ -30,6 +30,19 @@ class UserProfileService:
         from services.qdrant_client import get_qdrant_client
         self.client = client or get_qdrant_client()
         self._ensure_collection()
+
+    @staticmethod
+    def _normalize_gender(gender: Any) -> Optional[str]:
+        if not gender:
+            return None
+        g = str(gender).lower()
+        if "women" in g or "female" in g or "lady" in g:
+            return "women"
+        if "men" in g or "male" in g:
+            return "men"
+        if "unisex" in g or "both" in g:
+            return "unisex"
+        return None
     
     def _ensure_collection(self):
         """Create collection if it doesn't exist"""
@@ -74,6 +87,9 @@ class UserProfileService:
             points = results[0]
             if points:
                 profile = points[0].payload or {}
+                gender_norm = self._normalize_gender(profile.get("gender"))
+                if gender_norm:
+                    profile["gender"] = gender_norm
                 logger.info(f"[PROFILE] Loaded profile for {user_id}: {profile.get('name')}")
                 return profile
             
@@ -90,6 +106,9 @@ class UserProfileService:
             # Add metadata
             profile_data["user_id"] = user_id
             profile_data["updated_at"] = datetime.utcnow().isoformat()
+            gender_norm = self._normalize_gender(profile_data.get("gender"))
+            if gender_norm:
+                profile_data["gender"] = gender_norm
             
             # Use user_id as point ID for easy updates
             point_id = abs(hash(user_id)) % (10 ** 10)
@@ -145,23 +164,13 @@ class UserProfileService:
                             break
         
         # Extract gender preference
-        gender_map = {
-            "men": "men",
-            "man": "men",
-            "menswear": "men",
-            "male": "men",
-            "women": "women",
-            "woman": "women",
-            "womenswear": "women",
-            "female": "women",
-            "ladies": "women",
-        }
-        
-        for key, gender in gender_map.items():
+        for key in ["men", "man", "menswear", "male", "women", "woman", "womenswear", "female", "ladies"]:
             if key in lowered:
-                profile["gender"] = gender
-                updated = True
-                logger.info(f"[PROFILE] Extracted gender: {gender}")
+                gender = self._normalize_gender(key)
+                if gender:
+                    profile["gender"] = gender
+                    updated = True
+                    logger.info(f"[PROFILE] Extracted gender: {gender}")
                 break
         
         if updated:

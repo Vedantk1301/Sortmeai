@@ -86,6 +86,14 @@ class SortmeState(BaseModel):
 
     stylist_response: Optional[str] = None
     ui_event: Optional[Dict[str, Any]] = None
+    pending_gender_prompt: bool = False
+    profile_loaded: bool = False
+    intent_confidence: Optional[float] = None
+    recent_intent: Optional[str] = None
+    recent_destination: Optional[str] = None
+    recent_occasion: Optional[str] = None
+    recent_gender: Optional[str] = None
+    last_raw_query: Optional[str] = None
 
     ledger: List[LedgerEvent] = Field(default_factory=list)
 

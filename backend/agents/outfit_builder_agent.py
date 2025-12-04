@@ -37,7 +37,7 @@ class OutfitBuilderAgent:
             {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
         ]
         content = self.llm.chat(
-            model=Config.AGENT_MODEL,
+            model=Config.FAST_MODEL,
             messages=messages,
             response_format={"type": "json_object"},
         )

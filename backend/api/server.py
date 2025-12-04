@@ -109,6 +109,7 @@ def _build_response(state: SortmeState) -> Dict[str, Any]:
         "stylist_response": state.stylist_response,
         "products": state.final_products,
         "outfits": state.outfits,
+        "user_profile": state.user_profile,
         "clarification": {
             "question": state.clarification_question,
             "options": state.clarification_options,
@@ -131,7 +132,7 @@ async def lifespan(app: FastAPI):
     
     # Verify Qdrant connection (lightweight check)
     try:
-        from ..retrievers.catalog_retriever import CatalogRetriever
+        from retrievers.catalog_retriever import CatalogRetriever  # absolute import to avoid relative issues
         retriever = CatalogRetriever()
         if retriever.client:
             logger.info("Qdrant connection verified.")

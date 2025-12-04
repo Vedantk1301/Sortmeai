@@ -27,6 +27,8 @@ class StylistNode:
             trends=state.trends_context,
             clarification=clarification,
             mode=state.mode,
+            user_profile=state.user_profile,
+            conversation_history=state.conversation_history,
         )
         mode = state.mode or ("outfits" if state.outfits else ("products" if state.final_products else "clarification"))
         state.log_event("stylist_node", {"response_preview": (state.stylist_response or "")[:120], "mode": mode})

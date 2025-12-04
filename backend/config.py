@@ -29,9 +29,12 @@ class Config:
     OPENAI_API_KEY: str = _get_env("OPENAI_API_KEY", "")
     OPENAI_MODEL: str = _get_env("OPENAI_MODEL", "gpt-5-nano")
     AGENT_MODEL: str = _get_env("AGENT_MODEL", OPENAI_MODEL)
-    FAST_MODEL: str = _get_env("FAST_MODEL", OPENAI_MODEL)
+    # Low-latency, non-reasoning default
+    FAST_MODEL: str = _get_env("FAST_MODEL", "gpt-4.1-nano")
     WEATHER_MODEL: str = _get_env("WEATHER_MODEL", OPENAI_MODEL)
+    ORCHESTRATOR_MODEL: str = _get_env("ORCHESTRATOR_MODEL", "gpt-5-mini")
     EMB_MODEL_CATALOG: str = _get_env("EMB_MODEL_CATALOG", "text-embedding-3-large")
+    MIN_VALID_FOR_WEB: int = int(_get_env("MIN_VALID_FOR_WEB", "0"))
 
     # Vector store / Qdrant
     QDRANT_URL: str = _get_env("QDRANT_URL", "http://localhost:6333")

@@ -47,6 +47,7 @@ class KnowledgePlannerAgent:
             "occasion": intent.get("occasion"),
             "gender": intent.get("gender"),
             "raw_query": intent.get("raw_query"),
+            "context_hints": intent.get("context_hints") or {},
         }
         
         logger.info(f"[PLANNER] Input intent: {user_payload}")
@@ -56,7 +57,7 @@ class KnowledgePlannerAgent:
             {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)},
         ]
         content = self.llm.chat(
-            model=Config.AGENT_MODEL,
+            model=Config.FAST_MODEL,
             messages=messages,
             response_format={"type": "json_object"},
         )
@@ -69,6 +70,9 @@ class KnowledgePlannerAgent:
         
         plan.setdefault("web_queries", [])
         plan.setdefault("product_queries", [])
+
+        # Enforce gender hints to avoid mixing mens/womens when we already know the preference.
+        plan = self._enforce_gender(plan, intent.get("gender"))
         
         logger.info(f"[PLANNER] Generated plan:")
         logger.info(f"  - destination: {destination or 'None'}")
@@ -80,4 +84,32 @@ class KnowledgePlannerAgent:
         
         if self.ledger_hook:
             self.ledger_hook({"intent": user_payload, "plan": plan}, component="knowledge_planner")
+        return plan
+
+    def _enforce_gender(self, plan: Dict[str, Any], gender: Any) -> Dict[str, Any]:
+        if not gender:
+            return plan
+        g = str(gender).lower()
+        if g not in ("men", "women"):
+            return plan  # unisex/both/unknown - leave as-is
+
+        target_prefix = "men's" if g == "men" else "women's"
+        other_token = "women" if g == "men" else "men"
+
+        fixed_queries: List[str] = []
+        for q in plan.get("product_queries", []):
+            text = str(q).strip()
+            lower = text.lower()
+            # If it already matches target gender, keep
+            if target_prefix.split("'")[0] in lower or g in lower:
+                fixed_queries.append(text)
+                continue
+            # If it mentions the opposite gender, replace it
+            if other_token in lower:
+                text = lower.replace(other_token, target_prefix)
+            else:
+                text = f"{target_prefix} {text}"
+            fixed_queries.append(text)
+
+        plan["product_queries"] = fixed_queries
         return plan

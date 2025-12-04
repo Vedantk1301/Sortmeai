@@ -8,3 +8,5 @@ out
 *.pyc
 .DS_Store
 chat_history.json
+fashion_trends.json
+product_search_log.json

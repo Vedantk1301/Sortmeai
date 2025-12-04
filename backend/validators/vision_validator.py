@@ -11,22 +11,29 @@ from typing import Any, Dict, List
 from config import Config
 from services.llm import LLM
 
-VISION_PROMPT = """You are a strict fashion product validator. 
-Your job is to check whether each product matches the user's structured query.
+VISION_PROMPT = """You are a fashion product validator. 
+Your job is to check whether each product is a reasonable match for the user's query.
 
-You MUST:
-- Use both the image and metadata
-- Prioritize accuracy over inclusiveness
-- Reject ANY product that does not strictly match the pattern, color combination, or category
-- Explain why each rejected product failed, in one short sentence
-- Assign ranking tags:
-    "best_match", "close_match", "weak_match"
-- Assign a score from 0.0 to 1.0
+IMPORTANT: Be LENIENT. Only reject products that are CLEARLY wrong.
+
+Accept if:
+- Product type matches (e.g., "sweatshirt" query → sweatshirt product) ✅
+- Color is close enough (dark blue ≈ navy, light gray ≈ white) ✅
+- Style is reasonable (hooded/non-hooded are both valid sweatshirts) ✅
+
+Reject ONLY if:
+- Completely wrong category (e.g., "sweatshirt" query → shoes/pants) ❌
+- Totally different item type (e.g., "jeans" query → t-shirt) ❌
+
+Assign ranking tags:
+- "best_match": Perfect or near-perfect match
+- "close_match": Good match, minor differences acceptable
+- "weak_match": Borderline but still acceptable
 
 Output JSON only:
 {
   "valid": [{ "id": "...", "score": 0.95, "tag": "best_match", "reason": "" }],
-  "invalid": [{ "id": "...", "reason": "...", "tag": "weak_match" }]
+  "invalid": [{ "id": "...", "reason": "completely wrong category", "tag": "weak_match" }]
 }"""
 
 
@@ -50,53 +57,87 @@ class VisionValidator:
     def _llm_validate(self, query: Dict[str, Any], candidates: List[Dict[str, Any]], source: str) -> Dict[str, Any]:
         self.logger.info(f"[VISION] Validating {len(candidates)} candidates from {source}")
         
-        payload = {"query": query, "candidates": candidates, "source": source}
-        user_parts: List[Dict[str, Any]] = [
-            {"type": "input_text", "text": json.dumps(payload, ensure_ascii=False)}
-        ]
+        # Separate products with and without valid images
+        with_images = []
+        without_images = []
+        
         for cand in candidates:
             image_url = cand.get("image_url")
-            if image_url:
-                # OpenAI Responses API format
-                user_parts.append({"type": "input_image", "image_url": image_url})
-
-        inputs = [
-            {
-                "role": "system",
-                "content": [{"type": "input_text", "text": VISION_PROMPT}],
-            },
-            {
-                "role": "user",
-                "content": user_parts,
-            },
-        ]
-
-        content = self.llm_client.chat(
-            model=Config.AGENT_MODEL,
-            messages=inputs,
-            response_format={"type": "json_object"},
-        )
-        data = json.loads(content)
-        valid = data.get("valid") or []
-        invalid = data.get("invalid") or []
+            if image_url and isinstance(image_url, str) and image_url.startswith("http"):
+                with_images.append(cand)
+            else:
+                without_images.append(cand)
         
-        self.logger.info(f"[VISION] Result: {len(valid)} valid, {len(invalid)} invalid")
-        if invalid:
-            first_reason = invalid[0].get("reason", "unknown")
-            self.logger.info(f"[VISION] Sample rejection: {first_reason}")
+        self.logger.info(f"[VISION] {len(with_images)} products with images, {len(without_images)} without")
+        
+        # If we have products with images, try vision validation
+        vision_results = {"valid": [], "invalid": []}
+        if with_images:
+            try:
+                payload = {"query": query, "candidates": with_images, "source": source}
+                user_parts: List[Dict[str, Any]] = [
+                    {"type": "input_text", "text": json.dumps(payload, ensure_ascii=False)}
+                ]
+                for cand in with_images:
+                    image_url = cand.get("image_url")
+                    if image_url:
+                        user_parts.append({"type": "input_image", "image_url": image_url})
 
+                inputs = [
+                    {
+                        "role": "system",
+                        "content": [{"type": "input_text", "text": VISION_PROMPT}],
+                    },
+                    {
+                        "role": "user",
+                        "content": user_parts,
+                    },
+                ]
+
+                content = self.llm_client.chat(
+                    model=Config.AGENT_MODEL,
+                    messages=inputs,
+                    response_format={"type": "json_object"},
+                )
+                data = json.loads(content)
+                vision_results["valid"] = data.get("valid") or []
+                vision_results["invalid"] = data.get("invalid") or []
+                
+                self.logger.info(f"[VISION] LLM validated: {len(vision_results['valid'])} valid, {len(vision_results['invalid'])} invalid")
+            
+            except Exception as e:
+                # If vision fails for all, fall back to heuristic for products with images
+                self.logger.warning(f"[VISION] LLM validation failed, using heuristic: {e}")
+                heuristic_result = self._heuristic_validate(query, with_images, source)
+                vision_results["valid"].extend(heuristic_result["valid"])
+                vision_results["invalid"].extend(heuristic_result["invalid"])
+        
+        # Use heuristic validation for products without images
+        if without_images:
+            self.logger.info(f"[VISION] Using heuristic for {len(without_images)} products without images")
+            heuristic_result = self._heuristic_validate(query, without_images, source)
+            vision_results["valid"].extend(heuristic_result["valid"])
+            vision_results["invalid"].extend(heuristic_result["invalid"])
+        
+        # Enrich results
         enriched_valid = []
-        for idx, item in enumerate(valid):
+        for idx, item in enumerate(vision_results["valid"]):
             item.setdefault("tag", "close_match")
             item.setdefault("score", round(0.85 - idx * 0.02, 2))
             item.setdefault("reason", "")
             item["is_valid"] = True
             enriched_valid.append(item)
+        
         enriched_invalid = []
-        for item in invalid:
+        for item in vision_results["invalid"]:
             item["is_valid"] = False
             item.setdefault("tag", "weak_match")
             enriched_invalid.append(item)
+        
+        total_valid = len(enriched_valid)
+        total_invalid = len(enriched_invalid)
+        self.logger.info(f"[VISION] Final result: {total_valid} valid, {total_invalid} invalid")
+        
         return {"valid": enriched_valid, "invalid": enriched_invalid}
 
     def _heuristic_validate(self, query: Dict[str, Any], candidates: List[Dict[str, Any]], source: str) -> Dict[str, Any]:
