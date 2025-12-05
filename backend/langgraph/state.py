@@ -54,6 +54,8 @@ class SortmeState(BaseModel):
     # Memory and conversation
     conversation_history: List[Dict[str, str]] = Field(default_factory=list, description="Recent conversation messages")
     user_profile: Optional[Dict[str, Any]] = Field(default=None, description="User preferences from Mem0")
+    age_group: Optional[str] = None
+    skin_tone: Optional[str] = None
 
     fashion_query: Optional[Dict[str, Any]] = None
     broad_intent: Optional[Dict[str, Any]] = None

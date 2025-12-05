@@ -16,14 +16,17 @@ type TextResult = {
 type ProfileResult = {
   gender?: string;
   skin_tone?: string;
-  undertone?: string;
-  age_range?: string;
+  age_group?: string;
   best_palettes?: string[];
   style_vibes?: string[];
   fit_notes?: string[];
   pieces_to_prioritize?: string[];
   avoid?: string[];
   uplifts?: string[];
+  status?: "ok" | "needs_new_photo";
+  message?: string;
+  is_person?: boolean;
+  quality?: string;
 };
 
 type AgentProduct = {
@@ -102,10 +105,17 @@ export default function Home() {
   const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
   const [query, setQuery] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
-  const [userProfile, setUserProfile] = useState<{ name?: string; gender?: string }>({});
+  const [userProfile, setUserProfile] = useState<{
+    name?: string;
+    gender?: string;
+    age_group?: string;
+    skin_tone?: string;
+  }>({});
   const [profileResult, setProfileResult] = useState<ProfileResult | null>(null);
   const [loadingText, setLoadingText] = useState(false);
+  const [thinkingStep, setThinkingStep] = useState<string>("");
   const [loadingProfile, setLoadingProfile] = useState(false);
+  const [editingProfile, setEditingProfile] = useState(false);
   const fileRef = useRef<HTMLInputElement | null>(null);
   const chatEndRef = useRef<HTMLDivElement | null>(null);
   const threadIdRef = useRef<string>(
@@ -186,6 +196,34 @@ export default function Home() {
   };
 
 
+  // Fetch profile on mount
+  useEffect(() => {
+    const fetchProfile = async () => {
+      try {
+        const response = await fetch(`${apiBase}/api/profile/${userIdRef.current}`);
+        if (response.ok) {
+          const { data } = await response.json();
+          if (data) {
+            setUserProfile((prev) => ({
+              ...prev,
+              name: data.name,
+              gender: data.gender,
+              age_group: data.age_group,
+              skin_tone: data.skin_tone,
+            }));
+            setProfileResult((prev) => ({
+              ...prev,
+              ...data,
+            }));
+          }
+        }
+      } catch (e) {
+        console.error("Failed to fetch profile", e);
+      }
+    };
+    fetchProfile();
+  }, [apiBase]);
+
   // Auto-scroll to bottom
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -198,6 +236,7 @@ export default function Home() {
     setMessages((prev) => [...prev, userMsg]);
     setQuery("");
     setLoadingText(true);
+    setThinkingStep("Connecting...");
 
     try {
       const response = await fetch(`${apiBase}/api/chat`, {
@@ -213,27 +252,70 @@ export default function Home() {
 
       if (!response.ok) throw new Error("Failed to fetch response");
 
-      const payload: AgentResponse = await response.json();
-      const result = mapAgentToTextResult(payload);
+      const reader = response.body?.getReader();
+      if (!reader) throw new Error("No reader available");
 
-      if (payload.user_profile) {
-        setUserProfile({
-          name: payload.user_profile.name,
-          gender: payload.user_profile.gender,
-        });
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n\n");
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          if (line.startsWith("data: ")) {
+            const dataStr = line.slice(6).trim();
+            if (dataStr === "[DONE]") break;
+
+            try {
+              const event = JSON.parse(dataStr);
+
+              if (event.type === "thinking") {
+                setThinkingStep(event.message);
+              } else if (event.type === "error") {
+                throw new Error(event.message);
+              } else if (event.type === "result") {
+                const payload = event.payload;
+                const result = mapAgentToTextResult(payload);
+
+                if (payload.user_profile) {
+                  setUserProfile((prev) => ({
+                    ...prev,
+                    name: payload.user_profile?.name ?? prev.name,
+                    gender: payload.user_profile?.gender ?? prev.gender,
+                    age_group: (payload.user_profile as any)?.age_group ?? prev.age_group,
+                    skin_tone: (payload.user_profile as any)?.skin_tone ?? prev.skin_tone,
+                  }));
+                  setProfileResult((prev) => ({
+                    ...prev,
+                    gender: payload.user_profile?.gender ?? prev?.gender,
+                    age_group: (payload.user_profile as any)?.age_group ?? prev?.age_group,
+                    skin_tone: (payload.user_profile as any)?.skin_tone ?? prev?.skin_tone,
+                  }));
+                }
+
+                const aiMsg: Message = {
+                  id: (Date.now() + 1).toString(),
+                  role: "ai",
+                  content:
+                    payload.stylist_response ??
+                    result?.styling_intent ??
+                    "Here is what I found for you.",
+                  data: result,
+                  agent: payload,
+                };
+                setMessages((prev) => [...prev, aiMsg]);
+              }
+            } catch (e) {
+              // ignore json parse errors for partial chunks
+            }
+          }
+        }
       }
-
-      const aiMsg: Message = {
-        id: (Date.now() + 1).toString(),
-        role: "ai",
-        content:
-          payload.stylist_response ??
-          result?.styling_intent ??
-          "Here is what I found for you.",
-        data: result,
-        agent: payload,
-      };
-      setMessages((prev) => [...prev, aiMsg]);
     } catch (err) {
       const errorMsg: Message = {
         id: (Date.now() + 1).toString(),
@@ -243,6 +325,7 @@ export default function Home() {
       setMessages((prev) => [...prev, errorMsg]);
     } finally {
       setLoadingText(false);
+      setThinkingStep("");
     }
   };
 
@@ -263,13 +346,36 @@ export default function Home() {
     try {
       const form = new FormData();
       form.append("image", file);
+      form.append("userId", userIdRef.current);
+      form.append("threadId", threadIdRef.current);
       const response = await fetch(`${apiBase}/api/analyze/profile`, {
         method: "POST",
         body: form,
       });
-      if (!response.ok) throw new Error("Profile upload failed");
+      if (!response.ok) {
+        let detail: string | undefined;
+        try {
+          const errorJson = await response.json();
+          detail = errorJson?.detail;
+        } catch {
+          // ignore parse failure
+        }
+        console.error("Profile upload failed", response.status, response.statusText, detail);
+        alert(detail || "Profile upload failed. Please try again.");
+        throw new Error(detail || "Profile upload failed");
+      }
       const payload = await response.json();
-      setProfileResult(payload.data ?? payload);
+      console.log("Profile upload response", payload);
+      const normalized: ProfileResult = payload.data ?? payload;
+      setProfileResult(normalized);
+
+      if (normalized.status !== "needs_new_photo") {
+        setUserProfile((prev) => ({
+          ...prev,
+          gender: normalized.gender ?? prev.gender,
+          age_group: normalized.age_group ?? prev.age_group,
+        }));
+      }
     } catch (err) {
       console.error(err);
       alert("Could not analyze profile image.");
@@ -283,6 +389,65 @@ export default function Home() {
     const label = option.label ?? "Refine my search";
     const payload = option.id ?? option.label ?? "clarification_choice";
     await runQuery(label, [{ type: "clarification_choice", payload }]);
+  };
+
+  const ageGroups = ["16-18", "18-24", "25-34", "35-44", "45-54", "55-64", "65+"];
+  const genders = ["women", "men", "unisex"];
+  const skinTones = ["fair", "light", "medium", "tan", "olive", "brown", "deep"];
+
+  const handleProfileSave = async (payload: Partial<ProfileResult>) => {
+    console.log('[PROFILE] Saving profile:', payload);
+    try {
+      const requestBody = {
+        userId: userIdRef.current,
+        gender: payload.gender,
+        age_group: payload.age_group,
+        skin_tone: payload.skin_tone,
+      };
+      console.log('[PROFILE] Request body:', requestBody);
+
+      const response = await fetch(`${apiBase}/api/profile/update`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(requestBody),
+      });
+
+      console.log('[PROFILE] Response status:', response.status);
+
+      if (!response.ok) {
+        let detail: string | undefined;
+        try {
+          const errJson = await response.json();
+          detail = errJson?.detail || errJson?.error;
+          console.error('[PROFILE] Error response:', errJson);
+        } catch {
+          //
+        }
+        throw new Error(detail || "Could not update profile.");
+      }
+      const data = await response.json();
+      console.log('[PROFILE] Success response:', data);
+
+      const updated = data.data || {};
+      setUserProfile((prev) => ({
+        ...prev,
+        gender: updated.gender ?? prev.gender,
+        age_group: updated.age_group ?? prev.age_group,
+        skin_tone: updated.skin_tone ?? prev.skin_tone,
+        name: updated.name ?? prev.name,
+      }));
+      setProfileResult((prev) => ({
+        ...prev,
+        gender: updated.gender ?? prev?.gender,
+        age_group: updated.age_group ?? prev?.age_group,
+        skin_tone: updated.skin_tone ?? prev?.skin_tone,
+      }));
+      setEditingProfile(false);
+      console.log('[PROFILE] Profile updated successfully');
+    } catch (err) {
+      console.error('[PROFILE] Save failed:', err);
+      alert((err as Error).message || "Could not update profile.");
+    }
   };
 
   return (
@@ -299,7 +464,18 @@ export default function Home() {
         </div>
 
         <div className="sidebar-section">
-          <div className="sidebar-label">Your Profile</div>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
+            <div className="sidebar-label" style={{ marginBottom: 0 }}>Your Profile</div>
+            <button
+              className="icon-button"
+              type="button"
+              onClick={() => setEditingProfile((v) => !v)}
+              style={{ padding: "4px 8px", fontSize: "0.8rem", color: "var(--accent-primary)" }}
+            >
+              {editingProfile ? "Cancel" : "Edit"}
+            </button>
+          </div>
+
           {loadingProfile ? (
             <div className="dossier-item">
               <span className="loading-dots" style={{ padding: 0 }}>
@@ -309,46 +485,130 @@ export default function Home() {
               </span>
             </div>
           ) : (
-            <>
+            <div style={{ display: "flex", flexDirection: "column", gap: "0.8rem" }}>
               <div className="dossier-item">
                 <span>Name</span>
                 <span className="dossier-value">{userProfile.name || "-"}</span>
               </div>
               <div className="dossier-item">
                 <span>Gender</span>
-                <span className="dossier-value">{userProfile.gender || "-"}</span>
+                {editingProfile ? (
+                  <select
+                    value={userProfile.gender || ""}
+                    onChange={(e) =>
+                      setUserProfile((prev) => ({ ...prev, gender: e.target.value || undefined }))
+                    }
+                    className="profile-select"
+                  >
+                    <option value="">Select</option>
+                    {genders.map((g) => (
+                      <option key={g} value={g}>
+                        {g}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <span className="dossier-value">
+                    {userProfile.gender || profileResult?.gender || "-"}
+                  </span>
+                )}
               </div>
               <div className="dossier-item">
                 <span>Skin Tone</span>
-                <span className="dossier-value">{profileResult?.skin_tone || "-"}</span>
+                {editingProfile ? (
+                  <select
+                    value={userProfile.skin_tone || profileResult?.skin_tone || ""}
+                    onChange={(e) =>
+                      setUserProfile((prev) => ({ ...prev, skin_tone: e.target.value || undefined }))
+                    }
+                    className="profile-select"
+                  >
+                    <option value="">Select</option>
+                    {skinTones.map((tone) => (
+                      <option key={tone} value={tone}>
+                        {tone}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <span className="dossier-value">{profileResult?.skin_tone || userProfile.skin_tone || "-"}</span>
+                )}
               </div>
               <div className="dossier-item">
-                <span>Undertone</span>
-                <span className="dossier-value">{profileResult?.undertone || "-"}</span>
+                <span>Age Group</span>
+                {editingProfile ? (
+                  <select
+                    value={userProfile.age_group || profileResult?.age_group || ""}
+                    onChange={(e) =>
+                      setUserProfile((prev) => ({ ...prev, age_group: e.target.value || undefined }))
+                    }
+                    className="profile-select"
+                  >
+                    <option value="">Select</option>
+                    {ageGroups.map((age) => (
+                      <option key={age} value={age}>
+                        {age}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <span className="dossier-value">
+                    {profileResult?.age_group || userProfile.age_group || "Add later"}
+                  </span>
+                )}
               </div>
-            </>
+              {editingProfile && (
+                <div style={{ marginTop: "1rem" }}>
+                  <button
+                    type="button"
+                    className="save-btn"
+                    onClick={() =>
+                      handleProfileSave({
+                        gender: userProfile.gender,
+                        age_group: userProfile.age_group,
+                        skin_tone: userProfile.skin_tone || profileResult?.skin_tone,
+                      })
+                    }
+                  >
+                    Save Changes
+                  </button>
+                </div>
+              )}
+              {profileResult?.message && (
+                <div
+                  className={`profile-status ${profileResult.status === "needs_new_photo" ? "profile-status--warning" : ""
+                    }`}
+                >
+                  <span className="pulse-dot" />
+                  {profileResult.message}
+                </div>
+              )}
+            </div>
           )}
-          <button
-            className="upload-btn"
-            style={{ marginTop: "1rem" }}
-            onClick={() => fileRef.current?.click()}
-          >
-            <svg
-              width="16"
-              height="16"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
+
+          {!editingProfile && (
+            <button
+              className="upload-btn"
+              style={{ marginTop: "1.5rem" }}
+              onClick={() => fileRef.current?.click()}
             >
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-              <polyline points="17 8 12 3 7 8"></polyline>
-              <line x1="12" y1="3" x2="12" y2="15"></line>
-            </svg>
-            Upload Photo
-          </button>
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                <polyline points="17 8 12 3 7 8"></polyline>
+                <line x1="12" y1="3" x2="12" y2="15"></line>
+              </svg>
+              Upload Photo
+            </button>
+          )}
           <input
             ref={fileRef}
             type="file"
@@ -358,7 +618,7 @@ export default function Home() {
           />
         </div>
 
-        {profileResult && (
+        {profileResult && profileResult.status !== "needs_new_photo" && (
           <motion.div
             className="sidebar-section"
             initial={{ opacity: 0, y: 20 }}
@@ -375,7 +635,11 @@ export default function Home() {
               >
                 Vibes
               </div>
-              <div className="dossier-value">{profileResult.style_vibes?.join(", ")}</div>
+              <div className="dossier-value">
+                {profileResult.style_vibes?.length
+                  ? profileResult.style_vibes.join(", ")
+                  : "Add a clear portrait to fill this in."}
+              </div>
             </div>
             <div className="dossier-item" style={{ display: "block" }}>
               <div
@@ -387,7 +651,11 @@ export default function Home() {
               >
                 Palette
               </div>
-              <div className="dossier-value">{profileResult.best_palettes?.join(", ")}</div>
+              <div className="dossier-value">
+                {profileResult.best_palettes?.length
+                  ? profileResult.best_palettes.join(", ")
+                  : "Pending photo analysis."}
+              </div>
             </div>
           </motion.div>
         )}
@@ -434,7 +702,7 @@ export default function Home() {
                           }`}
                       >
                         <div className="message-body-text">
-                          {msg.content}
+                          {msg.role === "ai" ? formatText(msg.content) : msg.content}
 
                           {msg.agent?.clarification?.question &&
                             (msg.agent?.clarification?.options?.length ?? 0) > 0 && (
@@ -492,21 +760,24 @@ export default function Home() {
                                     animate={{ opacity: 1, y: 0 }}
                                     transition={{ delay: 0.1 * idx }}
                                   >
-                                    {product.image_url && (
-                                      <div className="product-image">
-                                        <img
-                                          src={product.image_url}
-                                          alt={product.title || "Product"}
-                                          loading="lazy"
-                                        />
-                                        {(() => {
-                                          const priceMeta = formatPrice(product.price);
-                                          return priceMeta.discount && priceMeta.discount > 0 ? (
-                                            <div className="discount-badge">{priceMeta.discount}% OFF</div>
-                                          ) : null;
-                                        })()}
-                                      </div>
-                                    )}
+                                    <div className="product-image">
+                                      <img
+                                        src={product.image_url || `https://placehold.co/300x400/1a1a2e/eef0f2?text=${encodeURIComponent(product.brand || 'Product')}`}
+                                        alt={product.title || "Product"}
+                                        loading="lazy"
+                                        onError={(e) => {
+                                          const target = e.target as HTMLImageElement;
+                                          target.onerror = null;
+                                          target.src = `https://placehold.co/300x400/1a1a2e/eef0f2?text=${encodeURIComponent(product.brand || 'Product')}`;
+                                        }}
+                                      />
+                                      {(() => {
+                                        const priceMeta = formatPrice(product.price);
+                                        return priceMeta.discount && priceMeta.discount > 0 ? (
+                                          <div className="discount-badge">{priceMeta.discount}% OFF</div>
+                                        ) : null;
+                                      })()}
+                                    </div>
                                     <div className="product-info">
                                       <div className="product-brand">
                                         {product.brand || "Brand"}
@@ -551,10 +822,17 @@ export default function Home() {
               >
                 <div className="avatar ai">Sort</div>
                 <div className="message-content message-content--text">
-                  <div className="loading-dots">
-                    <div className="dot"></div>
-                    <div className="dot"></div>
-                    <div className="dot"></div>
+                  <div className="loading-status" style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+                    <div className="loading-dots">
+                      <div className="dot"></div>
+                      <div className="dot"></div>
+                      <div className="dot"></div>
+                    </div>
+                    {thinkingStep && (
+                      <span className="thinking-text" style={{ fontSize: "0.9rem", color: "var(--text-tertiary)", fontStyle: "italic", animation: "fadeIn 0.3s ease" }}>
+                        {thinkingStep}
+                      </span>
+                    )}
                   </div>
                 </div>
               </motion.div>

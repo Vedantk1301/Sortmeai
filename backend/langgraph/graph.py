@@ -139,7 +139,7 @@ class SortmeGraph:
         state = self.ui_node(state)
         return state, False
 
-    async def run_once(self, state: SortmeState) -> SortmeState:
+    async def run_once(self, state: SortmeState, status_callback=None) -> SortmeState:
         # Load user profile from dedicated Qdrant collection (once per session)
         if self.profile_service and not getattr(state, "profile_loaded", False):
             try:
@@ -157,6 +157,7 @@ class SortmeGraph:
         # Load trends ONCE globally
         global _GLOBAL_TRENDS_CACHE
         if "trends" not in _GLOBAL_TRENDS_CACHE:
+            if status_callback: await status_callback("Checking latest fashion trends...")
             logger.info("[GRAPH] Fetching trends for the first time...")
             try:
                 _GLOBAL_TRENDS_CACHE["trends"] = await get_fashion_trends_text()
@@ -200,6 +201,7 @@ class SortmeGraph:
                 return state
         
         # Parse intent
+        if status_callback: await status_callback("Understanding your style needs...")
         state = self.parse_node(state)
         fq = state.fashion_query or {}
         qtype = fq.get("query_type")
@@ -306,6 +308,7 @@ class SortmeGraph:
         
         # Trending query - use loaded trends cache
         if qtype == "trending":
+            if status_callback: await status_callback("Checking latest fashion trends...")
             state.mode = "trending"
             state = self.stylist_node(state)
             state = self.ui_node(state)
@@ -313,23 +316,57 @@ class SortmeGraph:
 
         # Broad intent path
         if qtype == "broad":
-            
+            if status_callback: await status_callback("Planning the perfect look...")
             state = self.knowledge_planner_node(state)
             state, proceed = self._ensure_gender(state)
             if not proceed:
                 return state
             
-            # Only run weather + web search if there's a destination mentioned
             destination = (state.fashion_query or {}).get("destination")
+            
+            # PARALLEL EXECUTION: Weather + Web Search + Product Retrieval
+            import asyncio
+            tasks = []
+            
+            async def run_weather_safe(s):
+                return await asyncio.to_thread(self.weather_node, s)
+                
+            async def run_web_safe(s):
+                return await asyncio.to_thread(self.web_fashion_node, s)
+                
+            async def run_products_safe(s):
+                return await asyncio.to_thread(self.multi_query_retrieve_node, s)
+
+            # Enqueue tasks (using deep copy to avoid shared state issues)
+            if status_callback: await status_callback("Scouting products & conditions...")
+            
+            # Always run product search
+            product_task = asyncio.create_task(run_products_safe(state.model_copy(deep=True)))
+            tasks.append(product_task)
+
             if destination:
-                logger.info(f"[GRAPH] Destination detected: '{destination}' - running weather + web search")
-                state = self.weather_node(state)
-                state = self.web_fashion_node(state)
+                logger.info(f"[GRAPH] Destination detected: '{destination}' - parallelizing weather + web search")
+                weather_task = asyncio.create_task(run_weather_safe(state.model_copy(deep=True)))
+                web_task = asyncio.create_task(run_web_safe(state.model_copy(deep=True)))
+                tasks.extend([weather_task, web_task])
             else:
                 logger.info("[GRAPH] No destination - skipping weather and web search")
             
-            # Always use multi-query for broad intents (generates multiple Qdrant queries)
-            state = self.multi_query_retrieve_node(state)
+            # Wait for all tasks
+            results = await asyncio.gather(*tasks)
+            
+            # Merge results back to main state
+            if destination:
+                # order in tasks: [product, weather, web]
+                p_state, w_state, web_state = results
+                state.final_products = p_state.final_products
+                state.weather_context = w_state.weather_context
+                state.web_research = web_state.web_research
+            else:
+                p_state = results[0]
+                state.final_products = p_state.final_products
+
+            if status_callback: await status_callback("Curating outfits...")
             state = self.outfit_builder_node(state)
             state = self.stylist_node(state)
             state = self.ui_node(state)
@@ -353,17 +390,22 @@ class SortmeGraph:
             if not proceed:
                 return state
 
+            if status_callback: await status_callback("Searching catalog...")
             state = self.catalog_retrieve_node(state)
+            
+            if status_callback: await status_callback("Validating images...")
             state = self.vision_validate_node(state)
 
             min_valid = getattr(Config, "MIN_VALID_FOR_WEB", 0)
             if len(state.qdrant_valid) < min_valid:
                 logger.info(f"[GRAPH] Low valid products ({len(state.qdrant_valid)} < {min_valid}) -> Triggering Web Search")
+                if status_callback: await status_callback("Checking external sources...")
                 state = self.web_retrieve_node(state)
                 state = self.web_vision_validate_node(state)
             else:
                 logger.info(f"[GRAPH] Sufficient valid products ({len(state.qdrant_valid)} >= {min_valid}) -> Skipping Web Search")
 
+            if status_callback: await status_callback("Finalizing selection...")
             state = self.merge_node(state)
             state.mode = "product"  # Set mode to product for product-focused responses
             state = self.stylist_node(state)

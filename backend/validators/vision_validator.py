@@ -72,16 +72,27 @@ class VisionValidator:
         
         # If we have products with images, try vision validation
         vision_results = {"valid": [], "invalid": []}
-        if with_images:
+        
+        # Optimization: Only validate top 12 items with vision to save time
+        vision_limit = 12
+        vision_candidates = with_images[:vision_limit]
+        remaining_candidates = with_images[vision_limit:]
+        
+        if vision_candidates:
             try:
-                payload = {"query": query, "candidates": with_images, "source": source}
+                payload = {"query": query, "candidates": vision_candidates, "source": source}
                 user_parts: List[Dict[str, Any]] = [
                     {"type": "input_text", "text": json.dumps(payload, ensure_ascii=False)}
                 ]
-                for cand in with_images:
+                for cand in vision_candidates:
                     image_url = cand.get("image_url")
                     if image_url:
-                        user_parts.append({"type": "input_image", "image_url": image_url})
+                        # Use detail: low for faster processing
+                        user_parts.append({
+                            "type": "input_image", 
+                            "image_url": image_url,
+                            "detail": "low"
+                        })
 
                 inputs = [
                     {
@@ -108,9 +119,16 @@ class VisionValidator:
             except Exception as e:
                 # If vision fails for all, fall back to heuristic for products with images
                 self.logger.warning(f"[VISION] LLM validation failed, using heuristic: {e}")
-                heuristic_result = self._heuristic_validate(query, with_images, source)
+                heuristic_result = self._heuristic_validate(query, vision_candidates, source)
                 vision_results["valid"].extend(heuristic_result["valid"])
                 vision_results["invalid"].extend(heuristic_result["invalid"])
+        
+        # Process remaining candidates (skipped by vision limit) with heuristic
+        if remaining_candidates:
+            self.logger.info(f"[VISION] Using heuristic for {len(remaining_candidates)} remaining candidates (limit={vision_limit})")
+            heuristic_result = self._heuristic_validate(query, remaining_candidates, source)
+            vision_results["valid"].extend(heuristic_result["valid"])
+            vision_results["invalid"].extend(heuristic_result["invalid"])
         
         # Use heuristic validation for products without images
         if without_images:
@@ -119,20 +137,37 @@ class VisionValidator:
             vision_results["valid"].extend(heuristic_result["valid"])
             vision_results["invalid"].extend(heuristic_result["invalid"])
         
-        # Enrich results
+        # Enrich results by merging back with original candidates
+        # Create a map of id -> candidate for easy lookup
+        candidate_map = {str(c.get("id")): c for c in candidates}
+        
         enriched_valid = []
-        for idx, item in enumerate(vision_results["valid"]):
-            item.setdefault("tag", "close_match")
-            item.setdefault("score", round(0.85 - idx * 0.02, 2))
-            item.setdefault("reason", "")
-            item["is_valid"] = True
-            enriched_valid.append(item)
+        for item in vision_results["valid"]:
+            # item from LLM only has id, score, tag, reason
+            # We need to merge it with the original candidate data
+            cid = str(item.get("id"))
+            if cid in candidate_map:
+                original = candidate_map[cid]
+                # Update original with validation info
+                original["score"] = item.get("score", 0.85)
+                original["tag"] = item.get("tag", "close_match")
+                original["reason"] = item.get("reason", "")
+                original["is_valid"] = True
+                enriched_valid.append(original)
         
         enriched_invalid = []
         for item in vision_results["invalid"]:
-            item["is_valid"] = False
-            item.setdefault("tag", "weak_match")
-            enriched_invalid.append(item)
+            cid = str(item.get("id"))
+            if cid in candidate_map:
+                original = candidate_map[cid]
+                original["is_valid"] = False
+                original["tag"] = item.get("tag", "weak_match")
+                original["reason"] = item.get("reason", "invalidated by vision")
+                enriched_invalid.append(original)
+        
+        # Also handle any candidates that might have been missed by LLM (shouldn't happen but safe to check)
+        # If they were in 'with_images' but not in valid/invalid, we should probably treat them as valid or heuristic
+        # For now, let's assume LLM covers all sent candidates.
         
         total_valid = len(enriched_valid)
         total_invalid = len(enriched_invalid)

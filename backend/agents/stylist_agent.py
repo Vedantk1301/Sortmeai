@@ -30,13 +30,40 @@ If the user asks a follow-up question, use the conversation history to answer it
 """
 
 RICH_PRODUCT_PROMPT = """The user searched for: "{query}".
-We have {count} products ready.
+We have {count} products ready. User's name is {name}.
 
-Write a concise, well-formatted reply with clear line breaks:
-**Intro:** 1 short, excited line.
-**Did You Know?** 1 fun fact about the category/fabric/history.
-**Styling Ideas:** 3 bullet points, each with a label (e.g., Office, Weekend, Travel) + one pairing tip.
+Write a concise, personalized reply with clear line breaks:
+
+**Hey {name}!** Start with a short excited acknowledgment of their search (1 sentence).
+
+**Did You Know?** 1 fun fact about the category/fabric/history that's relevant to their search.
+
+**Styling Ideas:** 
+- 3 bullet points, each with a label (e.g., Office, Weekend, Travel) + one pairing tip.
+
 Keep it friendly, avoid walls of text, and use emojis sparingly (1–2 total).
+End with an offer to refine further!
+"""
+
+
+BROAD_PRODUCT_PROMPT = """The user asked for: "{query}".
+Context: Occasion={occasion}, Destination={destination}.
+We found {count} items covering different aspects of this request.
+
+Write a warm, helpful response in this format:
+
+**Hey {name}!** Start with a personalized excited acknowledgment of their request (1 short sentence).
+
+**What I Found:** Briefly describe the variety of pieces I've pulled together (e.g. "I've curated a mix of breathable tops, relaxed bottoms, and versatile pieces...") - keep it specific to what they asked for.
+
+**Quick Styling Tips:**
+- One tip about mixing these pieces
+- One tip about fabric/comfort for the occasion
+- One tip about accessorizing (optional)
+
+End with a warm line like "Let me know if you want to refine by color, budget, or style! ✨"
+
+Keep it conversational, excited, and helpful. Use 1-2 emojis max. Don't be generic!
 """
 
 class StylistAgent:
@@ -125,11 +152,21 @@ class StylistAgent:
         # Generate rich text response
         raw_query = query.get("raw_query", "items")
         count = len(products)
+        name = self.user_profile.get("name", "there")
         
-        prompt = RICH_PRODUCT_PROMPT.format(query=raw_query, count=count)
-        intro_text = self._generate_response(prompt, temperature=0.75)
+        if query.get("query_type") == "broad":
+            prompt = BROAD_PRODUCT_PROMPT.format(
+                query=raw_query,
+                count=count,
+                name=name,
+                occasion=query.get("occasion", "your event"),
+                destination=query.get("destination", "your trip")
+            )
+            intro_text = self._generate_response(prompt, temperature=0.75)
+        else:
+            prompt = RICH_PRODUCT_PROMPT.format(query=raw_query, count=count, name=name)
+            intro_text = self._generate_response(prompt, temperature=0.75)
         
-        body_lines = [self._format_product(prod) for prod in products]
         # Only return the rich text, let UI handle the product cards
         return intro_text
 

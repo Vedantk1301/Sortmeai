@@ -195,8 +195,23 @@ class ParserAgent:
         return None
 
     def _infer_item_type(self, lowered: str) -> str:
-        for item in ["shirt", "saree", "dress", "jacket", "sneakers", "jeans", "kurta"]:
+        for item in [
+            "shirt",
+            "saree",
+            "dress",
+            "jacket",
+            "sneakers",
+            "jeans",
+            "kurta",
+            "trouser",
+            "trousers",
+            "pant",
+            "pants",
+            "chinos",
+        ]:
             if item in lowered:
+                if item in {"trouser", "trousers", "pant", "pants", "chinos"}:
+                    return "trousers"
                 return item
         return "item"
 

@@ -31,11 +31,55 @@ if str(ROOT) not in sys.path:
 try:
     from fastapi import FastAPI
     from fastapi.middleware.cors import CORSMiddleware
+    from pydantic import BaseModel
 except ImportError:  # pragma: no cover - keeps module importable without deps
     FastAPI = None  # type: ignore
+    BaseModel = None  # type: ignore
 
 # Absolute imports keep uvicorn happy when the project is run from the repo root
 from langgraph import SortmeGraph, SortmeState
+
+
+# Profile update schema
+class ProfileUpdate(BaseModel):
+    userId: Optional[str] = None
+    name: Optional[str] = None
+    gender: Optional[str] = None
+    age_group: Optional[str] = None
+    skin_tone: Optional[str] = None
+
+
+AGE_GROUP_BUCKETS = ["16-18", "18-24", "25-34", "35-44", "45-54", "55-64", "65+"]
+
+
+def _coerce_age_group(value: Any) -> Optional[str]:
+    """Normalize age group values to standard buckets."""
+    if not value:
+        return None
+    import re
+    raw = str(value).strip().lower()
+    for bucket in AGE_GROUP_BUCKETS:
+        if raw == bucket.lower():
+            return bucket
+    digits = [int(d) for d in re.findall(r"\d{1,3}", raw)]
+    num = digits[0] if digits else None
+    if num is not None:
+        if 16 <= num <= 18: return "16-18"
+        if 18 <= num <= 24: return "18-24"
+        if 25 <= num <= 34: return "25-34"
+        if 35 <= num <= 44: return "35-44"
+        if 45 <= num <= 54: return "45-54"
+        if 55 <= num <= 64: return "55-64"
+        if num >= 65: return "65+"
+    if "teen" in raw: return "16-18"
+    if "young" in raw or "20s" in raw: return "18-24"
+    if "30" in raw: return "25-34"
+    if "40" in raw: return "35-44"
+    if "50" in raw: return "45-54"
+    if "60" in raw: return "55-64"
+    if "senior" in raw or "older" in raw: return "65+"
+    return None
+
 
 _state_store: Dict[str, SortmeState] = {}
 _lock = threading.Lock()
@@ -162,9 +206,67 @@ def create_app() -> FastAPI:
     graph = SortmeGraph()
     # Expose graph on app.state for optional reuse (e.g., compatibility endpoints)
     app.state.sortme_graph = graph
+    
+    # Initialize profile service
+    profile_service = None
+    try:
+        from services.user_profile import UserProfileService
+        profile_service = UserProfileService()
+        logger.info("[API] UserProfileService initialized")
+    except Exception as e:
+        logger.warning(f"[API] UserProfileService init failed: {e}")
+
+    @app.get("/api/profile/{userId}")
+    async def get_profile(userId: str) -> dict:
+        """Get stored profile fields."""
+        if not userId:
+            return {"data": {}}
+        if not profile_service:
+            return {"data": {}}
+        try:
+            profile = profile_service.get_profile(userId)
+            return {"data": profile}
+        except Exception as exc:
+            logger.error(f"[PROFILE] Get failed for {userId}: {exc}")
+            return {"data": {}}
+
+    @app.post("/api/profile/update")
+    async def update_profile(payload: ProfileUpdate) -> dict:
+        """Update stored profile fields."""
+        logger.info(f"[PROFILE] Update request: userId={payload.userId}, gender={payload.gender}, age_group={payload.age_group}, skin_tone={payload.skin_tone}")
+        
+        if not payload.userId:
+            return {"error": "userId is required"}
+            
+        if not profile_service:
+            return {"error": "Profile service unavailable"}
+            
+        try:
+            profile = profile_service.get_profile(payload.userId)
+            if payload.name is not None:
+                profile["name"] = payload.name
+            if payload.gender is not None:
+                profile["gender"] = payload.gender
+            if payload.age_group is not None:
+                coerced = _coerce_age_group(payload.age_group)
+                profile["age_group"] = coerced or payload.age_group
+            if payload.skin_tone is not None:
+                profile["skin_tone"] = payload.skin_tone
+                
+            profile_service.save_profile(payload.userId, profile)
+            logger.info(f"[PROFILE] Updated successfully: {profile}")
+            return {"data": profile}
+        except Exception as exc:
+            logger.error(f"[PROFILE] Update failed for userId={payload.userId}: {exc}")
+            return {"error": str(exc)}
 
     @app.post("/api/chat")
-    async def chat_endpoint(payload: dict) -> dict:
+    async def chat_endpoint(payload: dict) -> Any:
+        try:
+            from fastapi.responses import StreamingResponse
+        except ImportError:
+            return {"error": "StreamingResponse not available"}
+
         start_time = time.time()
         user_id = payload.get("userId", "demo-user")
         thread_id = payload.get("threadId", "demo-thread")
@@ -174,39 +276,42 @@ def create_app() -> FastAPI:
         logger.info("=" * 80)
         logger.info(f"[API] New request | user={user_id} | thread={thread_id}")
         logger.info(f"[API] Message: '{user_message}'")
-        logger.info(f"[API] UI Events: {ui_events}")
         
         state = _get_state(thread_id, user_id, user_message)
-        
-        # Handle UI events
-        event_start = time.time()
         _apply_ui_events(state, ui_events)
-        event_time = time.time() - event_start
         
-        # Run graph
-        graph_start = time.time()
-        state = await graph.run_once(state)
-        graph_time = time.time() - graph_start
-        
-        # Build response
-        response_start = time.time()
-        response = _build_response(state)
-        response_time = time.time() - response_start
-        
-        total_time = time.time() - start_time
-        
-        logger.info(f"[API] Request complete")
-        logger.info(f"  - UI Events: {event_time:.3f}s")
-        logger.info(f"  - Graph Execution: {graph_time:.3f}s")
-        logger.info(f"  - Response Build: {response_time:.3f}s")
-        logger.info(f"  - TOTAL: {total_time:.3f}s")
-        logger.info(f"  - Products returned: {len(response.get('products', []))}")
-        logger.info("=" * 80)
-        
-        # Save state after each request
-        _save_state()
-        
-        return response
+        async def event_generator():
+            try:
+                # Callback to yield progress events
+                async def status_callback(msg: str):
+                    evt = {"type": "thinking", "message": msg}
+                    yield f"data: {json.dumps(evt)}\n\n"
+                
+                # Run graph with streaming callback
+                updated_state = await graph.run_once(state, status_callback=status_callback)
+                
+                # Build final response
+                final_response = _build_response(updated_state)
+                
+                # Log stats
+                total_time = time.time() - start_time
+                logger.info(f"[API] Request complete in {total_time:.3f}s")
+                logger.info(f"[API] Products returned: {len(final_response.get('products', []))}")
+                
+                # Save state
+                _save_state()
+                
+                # Yield result
+                result_evt = {"type": "result", "payload": final_response}
+                yield f"data: {json.dumps(result_evt)}\n\n"
+                yield "data: [DONE]\n\n"
+                
+            except Exception as e:
+                logger.error(f"[API] Error in stream: {e}", exc_info=True)
+                err_evt = {"type": "error", "message": str(e)}
+                yield f"data: {json.dumps(err_evt)}\n\n"
+
+        return StreamingResponse(event_generator(), media_type="text/event-stream")
     
     return app
 

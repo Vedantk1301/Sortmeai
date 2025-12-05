@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
+import hashlib
 from typing import Any, Dict, Optional
 from datetime import datetime
 
@@ -66,10 +67,18 @@ class UserProfileService:
                 logger.info(f"[PROFILE] Collection created successfully")
         except Exception as e:
             logger.error(f"[PROFILE] Failed to ensure collection: {e}")
+
+    def _generate_deterministic_id(self, user_id: str) -> int:
+        """Generate a stable, deterministic integer ID from user_id."""
+        # Use SHA-256 to generate a stable hash, then convert to int
+        # Qdrant supports 64-bit unsigned integers (0 to 18446744073709551615)
+        # We'll use a safe range (63-bit) to avoid signed/unsigned issues in some clients
+        return int(hashlib.sha256(user_id.encode("utf-8")).hexdigest(), 16) % (2**63)
     
     def get_profile(self, user_id: str) -> Dict[str, Any]:
-        """Get user profile by user_id"""
+        """Get user profile by user_id. Merges duplicates if found."""
         try:
+            # Fetch up to 10 points to catch duplicates
             results = self.client.scroll(
                 collection_name=self.COLLECTION_NAME,
                 scroll_filter=rest.Filter(
@@ -80,21 +89,38 @@ class UserProfileService:
                         )
                     ]
                 ),
-                limit=1,
+                limit=10,
                 with_payload=True,
             )
             
             points = results[0]
-            if points:
-                profile = points[0].payload or {}
-                gender_norm = self._normalize_gender(profile.get("gender"))
-                if gender_norm:
-                    profile["gender"] = gender_norm
-                logger.info(f"[PROFILE] Loaded profile for {user_id}: {profile.get('name')}")
-                return profile
+            if not points:
+                logger.info(f"[PROFILE] No profile found for {user_id}")
+                return {}
+
+            # If multiple points, merge them
+            merged_profile: Dict[str, Any] = {}
             
-            logger.info(f"[PROFILE] No profile found for {user_id}")
-            return {}
+            # Sort by updated_at if available to prefer newer data
+            def get_updated_at(p):
+                return p.payload.get("updated_at", "")
+            
+            sorted_points = sorted(points, key=get_updated_at)
+            
+            for point in sorted_points:
+                payload = point.payload or {}
+                # Update merged_profile with non-empty values
+                for k, v in payload.items():
+                    if v is not None and v != "":
+                        merged_profile[k] = v
+            
+            # Normalize gender
+            gender_norm = self._normalize_gender(merged_profile.get("gender"))
+            if gender_norm:
+                merged_profile["gender"] = gender_norm
+                
+            logger.info(f"[PROFILE] Loaded merged profile for {user_id}: {merged_profile.get('name')}")
+            return merged_profile
             
         except Exception as e:
             logger.error(f"[PROFILE] Failed to get profile for {user_id}: {e}")
@@ -110,8 +136,8 @@ class UserProfileService:
             if gender_norm:
                 profile_data["gender"] = gender_norm
             
-            # Use user_id as point ID for easy updates
-            point_id = abs(hash(user_id)) % (10 ** 10)
+            # Use deterministic ID
+            point_id = self._generate_deterministic_id(user_id)
             
             # Upsert (create or update)
             self.client.upsert(
@@ -125,7 +151,7 @@ class UserProfileService:
                 ],
             )
             
-            logger.info(f"[PROFILE] Saved profile for {user_id}: {profile_data}")
+            logger.info(f"[PROFILE] Saved profile for {user_id} (id={point_id}): {profile_data}")
             return True
             
         except Exception as e:

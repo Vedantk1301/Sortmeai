@@ -47,14 +47,9 @@ class Reranker:
         # Get reranked candidates based on order
         reranked_candidates = [candidates[i] for i in order if i < len(candidates)]
         
-        # Apply brand diversity only to top 20 to avoid promoting very low relevance items
-        diversity_scope = 20
-        top_candidates = reranked_candidates[:diversity_scope]
-        rest_candidates = reranked_candidates[diversity_scope:]
-        
-        balanced_top = self._apply_brand_diversity(top_candidates, max_per_brand=2)
-        balanced_candidates = balanced_top + rest_candidates
-        
+        balanced_candidates = self._apply_brand_diversity(
+            reranked_candidates, max_per_brand=2, limit=top_k
+        )
         ranked = balanced_candidates[:top_k]
         preview = summarize_products(ranked, limit=top_k)
         debug["top_preview"] = preview
@@ -64,22 +59,60 @@ class Reranker:
         self.logger.info(f"[RERANK][{trace_label}] Top reranked: {preview}")
         return (ranked, debug) if capture_debug else ranked
 
-    def _apply_brand_diversity(self, candidates: List[Dict[str, Any]], max_per_brand: int = 2) -> List[Dict[str, Any]]:
-        """Reorder candidates to ensure brand diversity in top results."""
+    def _apply_brand_diversity(
+        self, candidates: List[Dict[str, Any]], max_per_brand: int = 2, limit: int | None = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Reorder candidates to keep brand mix in the final list.
+        First pass enforces the brand cap; fallback fills remaining slots (if any) to avoid returning too few items.
+        """
+        if not candidates:
+            return []
+
+        target = limit or len(candidates)
         brand_counts: Dict[str, int] = {}
-        diverse: List[Dict[str, Any]] = []
+        picked: List[Dict[str, Any]] = []
+        picked_ids = set()
         deferred: List[Dict[str, Any]] = []
         
         for item in candidates:
             brand = (item.get("brand") or "unknown").lower()
             if brand_counts.get(brand, 0) < max_per_brand:
-                diverse.append(item)
                 brand_counts[brand] = brand_counts.get(brand, 0) + 1
+                picked.append(item)
+                picked_ids.add(str(item.get("id")))
             else:
                 deferred.append(item)
-        
-        # Append deferred items at the end
-        return diverse + deferred
+            if len(picked) >= target:
+                return picked[:target]
+
+        # Try to pull in deferred items that introduce new brands while respecting the cap
+        # (Note: In this logic, deferred items are already from brands that hit the cap, 
+        # so this loop is mostly about filling up with next-best items if we are short)
+        for item in deferred:
+            if len(picked) >= target:
+                break
+            # We already know these items exceeded the cap in the first pass,
+            # but if we are desperate for items, we might need to relax the cap?
+            # The original logic re-checked the cap. Let's stick to that.
+            brand = (item.get("brand") or "unknown").lower()
+            if brand_counts.get(brand, 0) < max_per_brand:
+                brand_counts[brand] = brand_counts.get(brand, 0) + 1
+                picked.append(item)
+                picked_ids.add(str(item.get("id")))
+
+        # If we still don't have enough, fill from the original order ignoring the cap
+        if len(picked) < target:
+            for item in candidates:
+                if len(picked) >= target:
+                    break
+                item_id = str(item.get("id"))
+                if item_id in picked_ids:
+                    continue
+                picked.append(item)
+                picked_ids.add(item_id)
+
+        return picked[:target]
 
     def _render_query(self, query: Dict[str, Any]) -> str:
         if not isinstance(query, dict):
